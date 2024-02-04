@@ -275,11 +275,20 @@ typedef struct
 {
   uint8_t reportID = 3;
   uint8_t status = USAGE_STATUS_WEIGHT_STABLE;
-  uint8_t unit = USAGE_WEIGHT_UNIT_OUNCE;
-  int8_t scaling = 1;
+  uint8_t unit;
+  int8_t scaling;
   uint16_t weight;
 
 } __packed dataReport_t;
+
+typedef struct
+{
+  uint8_t reportID = 5;
+  uint8_t unit = USAGE_WEIGHT_UNIT_OUNCE;
+  int8_t scaling = 1;
+  uint16_t weight = 10;
+
+} __packed weightLimitReport_t;
 
 typedef struct
 {
@@ -290,6 +299,7 @@ typedef struct
 
 dataReport_t dataReport;
 attribReport_t attribReport;
+weightLimitReport_t weightLimitReport;
 weightAttribReport_t weightAttribReport;
 
 USBHID HID;
@@ -299,10 +309,12 @@ HIDReportDescriptor reportDescriptor = {descriptor, sizeof(descriptor)};
 HIDReporter dataReporter(HID, &reportDescriptor, (uint8_t *)&dataReport, sizeof(dataReport), dataReport.reportID);
 HIDReporter attribReporter(HID, &reportDescriptor, (uint8_t *)&attribReport, sizeof(attribReport), attribReport.reportID);
 HIDReporter weightAttribReporter(HID, &reportDescriptor, (uint8_t *)&weightAttribReport, sizeof(weightAttribReport), weightAttribReport.reportID);
+HIDReporter weightLimitReporter(HID, &reportDescriptor, (uint8_t *)&weightLimitReport, sizeof(weightLimitReport), weightLimitReport.reportID);
 
 void setup()
 {
   pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
   HID.begin(descriptor, sizeof(descriptor));
   while (!USBComposite)
     ;
@@ -310,12 +322,15 @@ void setup()
 
 void loop()
 {
-  dataReport.weight = 6;
+  dataReport.unit = USAGE_WEIGHT_UNIT_POUND;
+  dataReport.scaling = -2;
+
+  dataReport.weight = random(50,15000);
 
   dataReporter.sendReport();
-  attribReporter.sendReport();
-  weightAttribReporter.sendReport();
-
-  delay(1000);
-  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
+  //attribReporter.sendReport();
+  //weightLimitReporter.sendReport();
+  //weightAttribReporter.sendReport();
+  delay(250);
+  digitalWrite(LED_BUILTIN, !(digitalRead(LED_BUILTIN)));
 }
