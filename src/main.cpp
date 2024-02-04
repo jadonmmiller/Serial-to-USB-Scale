@@ -232,23 +232,73 @@ const uint8_t descriptor[] = {
     0xC0,                         // End Collection
 };
 
+#define USAGE_SCALE_CLASS 1
+#define USAGE_CLASS_I_METRIC 2
+#define USAGE_CLASS_II_METRIC 3
+#define USAGE_CLASS_III_METRIC 4
+#define USAGE_CLASS_IIIL_METRIC 5
+#define USAGE_CLASS_IV_METRIC 6
+#define USAGE_CLASS_III_ENGLISH 7
+#define USAGE_CLASS_IIIL_ENGLISH 8
+#define USAGE_CLASS_IV_ENGLISH 9
+#define USAGE_SCALE_CLASS_GENERIC 10
+#define USAGE_WEIGHT_UNIT_MILLIGRAM 1
+#define USAGE_WEIGHT_UNIT_GRAM 2
+#define USAGE_WEIGHT_UNIT_KILOGRAM 3
+#define USAGE_WEIGHT_UNIT_CARATS 4
+#define USAGE_WEIGHT_UNIT_TAELS 5
+#define USAGE_WEIGHT_UNIT_GRAINS 6
+#define USAGE_WEIGHT_UNIT_PENNYWEIGHTS 7
+#define USAGE_WEIGHT_UNIT_METRIC_TON 8
+#define USAGE_WEIGHT_UNIT_AVOIR_TON 9
+#define USAGE_WEIGHT_UNIT_TROY_OUNCE 10
+#define USAGE_WEIGHT_UNIT_OUNCE 11
+#define USAGE_WEIGHT_UNIT_POUND 12
+#define USAGE_STATUS_FAULT 1
+#define USAGE_STATUS_STABLE_AT_ZERO 2
+#define USAGE_STATUS_IN_MOTION 3
+#define USAGE_STATUS_WEIGHT_STABLE 4
+#define USAGE_STATUS_UNDER_ZERO 5
+#define USAGE_STATUS_OVER_LIMIT 6
+#define USAGE_STATUS_REQUIRES_CAL 7
+#define USAGE_STATUS_REQUIRES_ZERO 8
+
+typedef struct
+{
+  uint8_t reportID = 1;
+  uint8_t scaleClass = USAGE_CLASS_III_ENGLISH;
+  uint8_t unit = USAGE_WEIGHT_UNIT_OUNCE;
+
+} __packed attribReport_t;
+
 typedef struct
 {
   uint8_t reportID = 3;
-  uint8_t status = 4;
-  uint8_t unit = 12;
+  uint8_t status = USAGE_STATUS_WEIGHT_STABLE;
+  uint8_t unit = USAGE_WEIGHT_UNIT_OUNCE;
   int8_t scaling = 1;
   uint16_t weight;
 
 } __packed dataReport_t;
 
+typedef struct
+{
+  uint8_t reportID = 7;
+  uint8_t weight[15];
+
+} __packed weightAttribReport_t;
+
 dataReport_t dataReport;
+attribReport_t attribReport;
+weightAttribReport_t weightAttribReport;
 
 USBHID HID;
 
-HIDReportDescriptor dataReportDescriptor = {descriptor, sizeof(descriptor)};
+HIDReportDescriptor reportDescriptor = {descriptor, sizeof(descriptor)};
 
-HIDReporter dataReporter(HID, &dataReportDescriptor, (uint8_t *)&dataReport, sizeof(dataReport), dataReport.reportID);
+HIDReporter dataReporter(HID, &reportDescriptor, (uint8_t *)&dataReport, sizeof(dataReport), dataReport.reportID);
+HIDReporter attribReporter(HID, &reportDescriptor, (uint8_t *)&attribReport, sizeof(attribReport), attribReport.reportID);
+HIDReporter weightAttribReporter(HID, &reportDescriptor, (uint8_t *)&weightAttribReport, sizeof(weightAttribReport), weightAttribReport.reportID);
 
 void setup()
 {
@@ -263,6 +313,8 @@ void loop()
   dataReport.weight = 6;
 
   dataReporter.sendReport();
+  attribReporter.sendReport();
+  weightAttribReporter.sendReport();
 
   delay(1000);
   digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
