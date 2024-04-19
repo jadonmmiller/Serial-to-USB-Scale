@@ -263,14 +263,34 @@ const uint8_t descriptor[] = {
 #define USAGE_STATUS_REQUIRES_CAL 7
 #define USAGE_STATUS_REQUIRES_ZERO 8
 
-typedef struct
-{
-  uint8_t reportID = 1;
-  uint8_t scaleClass = USAGE_CLASS_III_ENGLISH;
-  uint8_t unit = USAGE_WEIGHT_UNIT_OUNCE;
+// Configuration Settings
+#define SOFTWARE_VERSION 0.2
+#define HARDWARE_VERSION 0.1
 
-} __packed attribReport_t;
+#define ENABLE_DEBUG
+#ifdef ENABLE_DEBUG
+#define DEBUG_BAUD 9600
+#define HEARTBEAT_PIN LED_BUILTIN
+#define HEARTBEAT_INTERVAL 250
+// #define DEBUG_HID
+#define DEBUG_SCALES
+#endif
 
+#define SCALES_BRAND_AVERY
+#ifdef SCALES_BRAND_AVERY
+#define SCALES_BAUD 9600
+#define SCALES_POLL_INTERVAL 5000
+#define SCALES_POLL_STRING "p"
+#define SCALES_RESPONSE_SIZE 100
+#define SCALES_TERMINATION_CHAR "\n\n"
+#define SCALES_MAX_WEIGHT 100.00
+#define SCALES_MIN_WEIGHT -100.00
+#endif
+
+// Debug Variables
+unsigned long heartbeatToggleTime = 0;
+
+// HID Variables
 typedef struct
 {
   uint8_t reportID = 3;
@@ -280,57 +300,176 @@ typedef struct
   uint16_t weight;
 
 } __packed dataReport_t;
-
-typedef struct
-{
-  uint8_t reportID = 5;
-  uint8_t unit = USAGE_WEIGHT_UNIT_OUNCE;
-  int8_t scaling = 1;
-  uint16_t weight = 10;
-
-} __packed weightLimitReport_t;
-
-typedef struct
-{
-  uint8_t reportID = 7;
-  uint8_t weight[15];
-
-} __packed weightAttribReport_t;
-
 dataReport_t dataReport;
-attribReport_t attribReport;
-weightLimitReport_t weightLimitReport;
-weightAttribReport_t weightAttribReport;
-
 USBHID HID;
-
 HIDReportDescriptor reportDescriptor = {descriptor, sizeof(descriptor)};
-
 HIDReporter dataReporter(HID, &reportDescriptor, (uint8_t *)&dataReport, sizeof(dataReport), dataReport.reportID);
-HIDReporter attribReporter(HID, &reportDescriptor, (uint8_t *)&attribReport, sizeof(attribReport), attribReport.reportID);
-HIDReporter weightAttribReporter(HID, &reportDescriptor, (uint8_t *)&weightAttribReport, sizeof(weightAttribReport), weightAttribReport.reportID);
-HIDReporter weightLimitReporter(HID, &reportDescriptor, (uint8_t *)&weightLimitReport, sizeof(weightLimitReport), weightLimitReport.reportID);
+
+// Scales Variables
+unsigned long scalesPollTime = 0;
+int scalesWeight = 0;
+
+// Function Definitions
+void debugInit();
+void debugUpdate();
+void HIDInit();
+void HIDUpdate();
+void scalesInit();
+void scalesPoll();
+void scalesParse();
 
 void setup()
 {
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);
-  HID.begin(descriptor, sizeof(descriptor));
-  while (!USBComposite)
-    ;
+// Start the debugger
+#ifdef ENABLE_DEBUG
+  debugInit();
+#endif
+
+  // Start the HID program
+  HIDInit();
+
+  // Start the scales communications
+  scalesInit();
 }
 
 void loop()
 {
+// Update the debugger
+#ifdef ENABLE_DEBUG
+  debugUpdate();
+#endif
+
+  // Send an HID report
+  HIDUpdate();
+
+  // Check if it's time to poll the scales
+  scalesPoll();
+
+  // Check for incoming scales data
+  scalesParse();
+}
+
+// Initializes the debug serial link and heartbeat LED
+void debugInit()
+{
+  // Init the heartbeat LED
+  pinMode(HEARTBEAT_PIN, OUTPUT);
+  digitalWrite(HEARTBEAT_PIN, HIGH);
+
+  // Init the debug link
+  Serial.begin(DEBUG_BAUD);
+  Serial.println("RS-232 to USB Scales Adapter");
+  Serial.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
+  Serial.println("---------------------------------------------------");
+}
+
+// Toggles the heartbeat LED
+void debugUpdate()
+{
+  if (millis() - heartbeatToggleTime >= HEARTBEAT_INTERVAL)
+  {
+    digitalWrite(HEARTBEAT_PIN, !digitalRead(HEARTBEAT_PIN));
+    heartbeatToggleTime = millis();
+  }
+}
+
+// Initializes the HID Components
+void HIDInit()
+{
+#ifdef DEBUG_HID
+  Serial.print("Starting HID");
+#endif
+
+  HID.begin(descriptor, sizeof(descriptor));
+
+  while (!USBComposite)
+  {
+#ifdef DEBUG_HID
+    Serial.print(".");
+    delay(250);
+#endif
+  }
+
+#ifdef DEBUG_HID
+  Serial.println();
+  Serial.println("HID Started");
+#endif
+}
+
+// Sends a report to the USB Host
+void HIDUpdate()
+{
+#ifdef DEBUG_HID
+  Serial.println("Sending HID Report");
+#endif
+
+  // Create a data report
   dataReport.unit = USAGE_WEIGHT_UNIT_POUND;
-  dataReport.scaling = -2;
+  dataReport.scaling = -2; // This makes the scale expect 1.23 to be encoded as 123
+  dataReport.weight = scalesWeight;
 
-  dataReport.weight = random(50,15000);
-
+  // Send the report
   dataReporter.sendReport();
-  //attribReporter.sendReport();
-  //weightLimitReporter.sendReport();
-  //weightAttribReporter.sendReport();
-  delay(250);
-  digitalWrite(LED_BUILTIN, !(digitalRead(LED_BUILTIN)));
+
+#ifdef DEBUG_HID
+  Serial.println("HID Report Sent");
+#endif
+}
+
+// Starts the serial link with the scales
+void scalesInit()
+{
+#ifdef DEBUG_SCALES
+  Serial.println("Starting Scales");
+#endif
+
+  Serial2.begin(SCALES_BAUD);
+
+#ifdef DEBUG_SCALES
+  Serial.println("Scales Started");
+#endif
+}
+
+// Polls the scale after a certain amount of time
+void scalesPoll()
+{
+  if (millis() - scalesPollTime >= SCALES_POLL_INTERVAL)
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Requesting Data from Scales - Sent \"" + String(SCALES_POLL_STRING) + "\"");
+#endif
+    // Request Weight Information from the Scales
+    Serial2.println(SCALES_POLL_STRING);
+    scalesPollTime = millis();
+  }
+}
+
+// Watches the serial line and parses data when it's received
+void scalesParse()
+{
+  static char receivedData[SCALES_RESPONSE_SIZE] = "\0";
+  static char parsedData[SCALES_RESPONSE_SIZE] = "\0";
+
+  static byte bufferIndex = 0;
+
+  // Receive new data
+  while (Serial2.available() > 0)
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Receiving Character from Scales - '" + String(char(Serial2.peek())) + "'");
+#endif
+    receivedData[bufferIndex] = Serial2.read();
+    if (bufferIndex < SCALES_RESPONSE_SIZE) // Check for buffer overflows
+    {
+      receivedData[bufferIndex + 1] = '\0'; // Terminate the string
+      bufferIndex++;
+    }
+    else
+    {
+#ifdef DEBUG_SCALES
+      Serial.println("Scales Receive Buffer Overflow! - Buffer Size: " + String(bufferIndex + 1) + "Characters"); // Add 1 to account for zero-inclusive numbering
+#endif
+      bufferIndex = 0; // Start overwriting the buffer
+    }
+  }
 }
