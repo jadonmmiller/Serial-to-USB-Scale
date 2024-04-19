@@ -267,28 +267,29 @@ const uint8_t descriptor[] = {
 #define SOFTWARE_VERSION 0.2
 #define HARDWARE_VERSION 0.1
 
-#define ENABLE_DEBUG
+// #define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG_BAUD 9600
 #define HEARTBEAT_PIN LED_BUILTIN
 #define HEARTBEAT_INTERVAL 250
-// #define DEBUG_HID
+#define DEBUG_HID
 #define DEBUG_SCALES
 #endif
 
+#define HID_PRECISION_DIGITS 2
+
 #define SCALES_BRAND_AVERY
 #ifdef SCALES_BRAND_AVERY
-#define SCALES_BAUD 9600
-#define SCALES_POLL_INTERVAL 5000
+#define SCALES_BAUD 115200
+#define SCALES_POLL_INTERVAL 1500
 #define SCALES_POLL_STRING "p"
-#define SCALES_RESPONSE_SIZE 100
-#define SCALES_TERMINATION_CHAR "\n\n"
+#define SCALES_RESPONSE_SIZE 75
+#define SCALES_NUMBER_OF_VALUES 3
+#define SCALES_WEIGHT_NUMBER 0
+#define SCALES_TERMINATION "\n\n"
 #define SCALES_MAX_WEIGHT 100.00
 #define SCALES_MIN_WEIGHT -100.00
 #endif
-
-// Debug Variables
-unsigned long heartbeatToggleTime = 0;
 
 // HID Variables
 typedef struct
@@ -306,7 +307,6 @@ HIDReportDescriptor reportDescriptor = {descriptor, sizeof(descriptor)};
 HIDReporter dataReporter(HID, &reportDescriptor, (uint8_t *)&dataReport, sizeof(dataReport), dataReport.reportID);
 
 // Scales Variables
-unsigned long scalesPollTime = 0;
 int scalesWeight = 0;
 
 // Function Definitions
@@ -317,6 +317,7 @@ void HIDUpdate();
 void scalesInit();
 void scalesPoll();
 void scalesParse();
+bool isNumeric(char c);
 
 void setup()
 {
@@ -349,6 +350,7 @@ void loop()
   scalesParse();
 }
 
+#ifdef ENABLE_DEBUG
 // Initializes the debug serial link and heartbeat LED
 void debugInit()
 {
@@ -366,12 +368,14 @@ void debugInit()
 // Toggles the heartbeat LED
 void debugUpdate()
 {
+  static unsigned long heartbeatToggleTime = 0;
   if (millis() - heartbeatToggleTime >= HEARTBEAT_INTERVAL)
   {
     digitalWrite(HEARTBEAT_PIN, !digitalRead(HEARTBEAT_PIN));
     heartbeatToggleTime = millis();
   }
 }
+#endif
 
 // Initializes the HID Components
 void HIDInit()
@@ -390,7 +394,7 @@ void HIDInit()
 #endif
   }
 
-#ifdef DEBUG_HID
+#ifdef ENABLE_DEBUG
   Serial.println();
   Serial.println("HID Started");
 #endif
@@ -405,7 +409,7 @@ void HIDUpdate()
 
   // Create a data report
   dataReport.unit = USAGE_WEIGHT_UNIT_POUND;
-  dataReport.scaling = -2; // This makes the scale expect 1.23 to be encoded as 123
+  dataReport.scaling = -HID_PRECISION_DIGITS; // -2 makes the scale expect 1.23 to be encoded as 123
   dataReport.weight = scalesWeight;
 
   // Send the report
@@ -425,7 +429,7 @@ void scalesInit()
 
   Serial2.begin(SCALES_BAUD);
 
-#ifdef DEBUG_SCALES
+#ifdef ENABLE_DEBUG
   Serial.println("Scales Started");
 #endif
 }
@@ -433,6 +437,7 @@ void scalesInit()
 // Polls the scale after a certain amount of time
 void scalesPoll()
 {
+  static unsigned long scalesPollTime = 0;
   if (millis() - scalesPollTime >= SCALES_POLL_INTERVAL)
   {
 #ifdef DEBUG_SCALES
@@ -447,29 +452,135 @@ void scalesPoll()
 // Watches the serial line and parses data when it's received
 void scalesParse()
 {
-  static char receivedData[SCALES_RESPONSE_SIZE] = "\0";
-  static char parsedData[SCALES_RESPONSE_SIZE] = "\0";
+  static char receivedData[SCALES_RESPONSE_SIZE + 1] = "\0"; // Add 1 for null termination
+  static float parsedNumbers[SCALES_NUMBER_OF_VALUES + 1] = {0};
 
   static byte bufferIndex = 0;
 
   // Receive new data
-  while (Serial2.available() > 0)
+  if (Serial2.available() > 0)
   {
 #ifdef DEBUG_SCALES
-    Serial.println("Receiving Character from Scales - '" + String(char(Serial2.peek())) + "'");
+    Serial.println("Receiving '" + String(char(Serial2.peek())) + "'");
 #endif
     receivedData[bufferIndex] = Serial2.read();
-    if (bufferIndex < SCALES_RESPONSE_SIZE) // Check for buffer overflows
+    receivedData[bufferIndex + 1] = '\0';       // Terminate the string
+    if (bufferIndex < SCALES_RESPONSE_SIZE - 1) // Check for buffer overflows
     {
-      receivedData[bufferIndex + 1] = '\0'; // Terminate the string
       bufferIndex++;
     }
     else
     {
-#ifdef DEBUG_SCALES
-      Serial.println("Scales Receive Buffer Overflow! - Buffer Size: " + String(bufferIndex + 1) + "Characters"); // Add 1 to account for zero-inclusive numbering
+#ifdef ENABLE_DEBUG
+      Serial.println("Scales Receive Buffer Overflow! - Size: " + String(bufferIndex + 1));
 #endif
       bufferIndex = 0; // Start overwriting the buffer
     }
+
+    // Watch for the transmit termination
+    if (strstr(receivedData, SCALES_TERMINATION) != NULL)
+    {
+      bufferIndex = 0; // Reset the reading procedure
+#ifdef DEBUG_SCALES
+      Serial.println("Termination Found: " + String(SCALES_TERMINATION));
+      Serial.println("Data Received:");
+      Serial.println(receivedData);
+#endif
+
+      // Parse the recieved data
+#ifdef DEBUG_SCALES
+      Serial.println("Parsing Data");
+#endif
+
+      byte numberIndex = 0; // Counts the different values we pull from the data
+
+      // Loop through the data, pulling out numbers
+      for (int i = 0; receivedData[i] != '\0' || i >= SCALES_RESPONSE_SIZE - 1; i++)
+      {
+
+#ifdef DEBUG_SCALES
+        Serial.println("Parsing: " + String(char(receivedData[i])));
+#endif
+
+        if (isNumeric(receivedData[i])) // Starting a number
+        {
+#ifdef DEBUG_SCALES
+          Serial.println("Starting Number");
+#endif
+          parsedNumbers[numberIndex] = strtof(receivedData + i, NULL);
+#ifdef DEBUG_SCALES
+          Serial.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
+#endif
+          // Loop through the rest of the number's characters
+          while (isNumeric(receivedData[i + 1]))
+          {
+            i++;
+#ifdef DEBUG_SCALES
+            Serial.println("Ignoring: " + String(char(receivedData[i])));
+#endif
+          }
+
+          // Get ready to receive the next value
+          if (numberIndex < SCALES_NUMBER_OF_VALUES)
+          {
+            numberIndex++;
+          }
+          else // We're gonna overflow the array
+          {
+#ifdef ENABLE_DEBUG
+            Serial.println("Too Many Scales Values Found! - " + String(numberIndex + 1)); // Add 1 to account for zero-based array
+#endif
+            break;
+          }
+        }
+      } // Finished looping through data
+
+#ifdef DEBUG_SCALES
+      Serial.println("Weight Parsed: " + String(parsedNumbers[SCALES_WEIGHT_NUMBER]));
+#endif
+
+      if (parsedNumbers[SCALES_WEIGHT_NUMBER] >= SCALES_MIN_WEIGHT && parsedNumbers[SCALES_WEIGHT_NUMBER] <= SCALES_MAX_WEIGHT) // Weight is within scales limits
+      {
+#ifdef DEBUG_SCALES
+        Serial.println("Weight Valid");
+#endif
+
+        // Calculate Weight
+        scalesWeight = parsedNumbers[SCALES_WEIGHT_NUMBER] * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
+#ifdef DEBUG_SCALES
+        Serial.println("Converted Weight: " + String(scalesWeight));
+#endif
+      }
+      else
+      {
+#ifdef DEBUG_SCALES
+        Serial.println("Weight Invalid!");
+#endif
+      }
+    }
+  }
+}
+
+// Returns true if the character is a number or decimal point.
+bool isNumeric(char c)
+{
+  switch (c)
+  {
+  case '0':
+  case '1':
+  case '2':
+  case '3':
+  case '4':
+  case '5':
+  case '6':
+  case '7':
+  case '8':
+  case '9':
+  case '.':
+    return true;
+    break;
+  default:
+    return false;
+    break;
   }
 }
