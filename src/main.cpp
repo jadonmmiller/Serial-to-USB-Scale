@@ -232,6 +232,7 @@ const uint8_t descriptor[] = {
     0xC0,                         // End Collection
 };
 
+// Constants
 #define USAGE_SCALE_CLASS 1
 #define USAGE_CLASS_I_METRIC 2
 #define USAGE_CLASS_II_METRIC 3
@@ -263,33 +264,46 @@ const uint8_t descriptor[] = {
 #define USAGE_STATUS_REQUIRES_CAL 7
 #define USAGE_STATUS_REQUIRES_ZERO 8
 
+#define KG_TO_LB_CONVERSION_FACTOR 2.20462262
+
 // Configuration Settings
-#define SOFTWARE_VERSION 0.3
+#define SOFTWARE_VERSION 0.4
 #define HARDWARE_VERSION 0.2
 
-#define ENABLE_DEBUG
-#ifdef ENABLE_DEBUG
-#define DEBUG_BAUD 9600
+#define ENABLE_HEARTBEAT
+#ifdef ENABLE_HEARTBEAT
 #define HEARTBEAT_PIN LED_BUILTIN
 #define HEARTBEAT_INTERVAL 250
+#endif
+
+//#define ENABLE_DEBUG
+#ifdef ENABLE_DEBUG
+#define DEBUG_BAUD 9600
 // #define DEBUG_HID
 #define DEBUG_SCALES
+#ifdef DEBUG_SCALES
+// #define DEBUG_SCALES_RECEIVE
+// #define DEBUG_SCALES_VERIFY
+// #define DEBUG_SCALES_PARSE
+#endif
 #endif
 
 #define HID_PRECISION_DIGITS 2
 
 #define SCALES_BRAND_AVERY
 #ifdef SCALES_BRAND_AVERY
-#define SCALES_BAUD 115200
+#define SCALES_BAUD 9600
 #define SCALES_POLL_INTERVAL 1500
 #define SCALES_POLL_STRING "p"
 #define SCALES_RESPONSE_SIZE 75
 #define SCALES_NUMBER_OF_VALUES 3
 #define SCALES_WEIGHT_NUMBER 0
 #define SCALES_TERMINATION "\n\n"
-#define SCALES_RESPONSE_FORMAT_LB "GR WT:     0.12 lb\r\nCOUNT:            0\n\rPIECE WT: -------- lb\r\n\n"
-#define SCALES_MAX_WEIGHT 100.00
-#define SCALES_MIN_WEIGHT -100.00
+#define SCALES_RESPONSE_FORMAT_LB "GROSS WT:     0.00 lb\r\nCOUNT:            0\r\nPIECE WT: -------- lb\r\n\n"
+#define SCALES_RESPONSE_FORMAT_KG "GROSS WT:     0.00 kg\r\nCOUNT:            0\r\nPIECE WT: -------- kg\r\n\n"
+#define SCALES_RESPONSE_FORMAT_MASK "00000000001111111100000000000011111111111100000000000011111111000000" // Zeros indicate data that nevver changes, and ones indicate variables
+#define SCALES_MAX_WEIGHT_LB 100.00
+#define SCALES_MIN_WEIGHT_LB -100.00
 #endif
 
 // HID Variables
@@ -309,21 +323,33 @@ HIDReporter dataReporter(HID, &reportDescriptor, (uint8_t *)&dataReport, sizeof(
 
 // Scales Variables
 int scalesWeight = 0;
+enum unit_t
+{
+  lb,
+  kg
+};
 
 // Function Definitions
+void heartbeatInit();
+void heartbeatUpdate();
 void debugInit();
-void debugUpdate();
 void HIDInit();
 void HIDUpdate();
 void scalesInit();
 void scalesPoll();
 void scalesReceive();
 void scalesParse(char *data);
-void scalesCalcWeight(float raw);
+void scalesCalcWeight(float raw, unit_t unit);
+bool verifyResponse(char *data, char *format, char *mask);
 bool isNumeric(char c);
 
 void setup()
 {
+// Start the heartbeat
+#ifdef ENABLE_HEARTBEAT
+  heartbeatInit();
+#endif
+
 // Start the debugger
 #ifdef ENABLE_DEBUG
   debugInit();
@@ -338,9 +364,9 @@ void setup()
 
 void loop()
 {
-// Update the debugger
-#ifdef ENABLE_DEBUG
-  debugUpdate();
+// Update the heartbeat
+#ifdef ENABLE_HEARTBEAT
+  heartbeatUpdate();
 #endif
 
   // Send an HID report
@@ -353,23 +379,16 @@ void loop()
   scalesReceive();
 }
 
-#ifdef ENABLE_DEBUG
-// Initializes the debug serial link and heartbeat LED
-void debugInit()
+#ifdef ENABLE_HEARTBEAT
+// Sets up the heartbeat LED
+void heartbeatInit()
 {
-  // Init the heartbeat LED
   pinMode(HEARTBEAT_PIN, OUTPUT);
   digitalWrite(HEARTBEAT_PIN, HIGH);
-
-  // Init the debug link
-  Serial.begin(DEBUG_BAUD);
-  Serial.println("RS-232 to USB Scales Adapter");
-  Serial.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
-  Serial.println("---------------------------------------------------");
 }
 
 // Toggles the heartbeat LED
-void debugUpdate()
+void heartbeatUpdate()
 {
   static unsigned long heartbeatToggleTime = 0;
   if (millis() - heartbeatToggleTime >= HEARTBEAT_INTERVAL)
@@ -377,6 +396,17 @@ void debugUpdate()
     digitalWrite(HEARTBEAT_PIN, !digitalRead(HEARTBEAT_PIN));
     heartbeatToggleTime = millis();
   }
+}
+#endif
+
+#ifdef ENABLE_DEBUG
+// Initializes the debug serial link
+void debugInit()
+{
+  Serial.begin(DEBUG_BAUD);
+  Serial.println("RS-232 to USB Scales Adapter");
+  Serial.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
+  Serial.println("---------------------------------------------------");
 }
 #endif
 
@@ -462,7 +492,7 @@ void scalesReceive()
   // Receive new data
   if (Serial2.available() > 0)
   {
-#ifdef DEBUG_SCALES
+#ifdef DEBUG_SCALES_RECEIVE
     Serial.println("Receiving '" + String(char(Serial2.peek())) + "'");
 #endif
     receivedData[bufferIndex] = Serial2.read();
@@ -483,8 +513,10 @@ void scalesReceive()
     if (strstr(receivedData, SCALES_TERMINATION) != NULL)
     {
       bufferIndex = 0; // Reset the reading procedure
-#ifdef DEBUG_SCALES
+#ifdef DEBUG_SCALES_RECEIVE
       Serial.println("Termination Found: " + String(SCALES_TERMINATION));
+#endif
+#ifdef DEBUG_SCALES
       Serial.println("Data Received:");
       Serial.println(receivedData);
 #endif
@@ -495,12 +527,46 @@ void scalesReceive()
   }
 }
 
-// Parses the data received from the scales
+// Verifies and parses the data received from the scales
 void scalesParse(char *data)
 {
-  static float parsedNumbers[SCALES_NUMBER_OF_VALUES + 1] = {0};
+  // Compare the response to known formats, and identify the unit
+  unit_t responseUnit;
+  char formatLB[SCALES_RESPONSE_SIZE + 1] = SCALES_RESPONSE_FORMAT_LB;
+  char formatKG[SCALES_RESPONSE_SIZE + 1] = SCALES_RESPONSE_FORMAT_KG;
+  char mask[SCALES_RESPONSE_SIZE + 1] = SCALES_RESPONSE_FORMAT_MASK;
+
+  if (verifyResponse(data, formatLB, mask))
+  {
+    // We've received a good response in lb format
+    responseUnit = lb;
 
 #ifdef DEBUG_SCALES
+    Serial.println("Good Response Received - Pounds");
+#endif
+  }
+  else if (verifyResponse(data, formatKG, mask))
+  {
+    // Good response in kg format
+    responseUnit = kg;
+
+#ifdef DEBUG_SCALES
+    Serial.println("Good Response Received - Kilograms");
+#endif
+  }
+  else
+  {
+    // Bad Response
+#ifdef ENABLE_DEBUG
+    Serial.println("Scales response isn't in a known format!");
+    return;
+#endif
+  }
+
+  // Start parsing the data
+  static float parsedNumbers[SCALES_NUMBER_OF_VALUES + 1] = {0};
+
+#ifdef DEBUG_SCALES_PARSE
   Serial.println("Parsing Data");
 #endif
 
@@ -510,24 +576,24 @@ void scalesParse(char *data)
   for (int i = 0; data[i] != '\0' || i >= SCALES_RESPONSE_SIZE - 1; i++)
   {
 
-#ifdef DEBUG_SCALES
+#ifdef DEBUG_SCALES_PARSE
     Serial.println("Parsing: " + String(char(data[i])));
 #endif
 
     if (isNumeric(data[i])) // Starting a number
     {
-#ifdef DEBUG_SCALES
+#ifdef DEBUG_SCALES_PARSE
       Serial.println("Starting Number");
 #endif
       parsedNumbers[numberIndex] = strtof(data + i, NULL);
-#ifdef DEBUG_SCALES
+#ifdef DEBUG_SCALES_PARSE
       Serial.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
 #endif
       // Loop through the rest of the number's characters
       while (isNumeric(data[i + 1]))
       {
         i++;
-#ifdef DEBUG_SCALES
+#ifdef DEBUG_SCALES_PARSE
         Serial.println("Ignoring: " + String(char(data[i])));
 #endif
       }
@@ -552,22 +618,38 @@ void scalesParse(char *data)
 #endif
 
   // Convert and save the weight
-  scalesCalcWeight(parsedNumbers[SCALES_WEIGHT_NUMBER]);
+  scalesCalcWeight(parsedNumbers[SCALES_WEIGHT_NUMBER], responseUnit);
 }
 
 // Converts the weight from the scales to what the computer wants
-void scalesCalcWeight(float raw)
+void scalesCalcWeight(float raw, unit_t unit)
 {
-  if (raw >= SCALES_MIN_WEIGHT && raw <= SCALES_MAX_WEIGHT) // Weight is within scales limits
+  // Convert the weight to lbs if necessary
+  float weightLB = 0; // The weight, converted to lbs
+  if (unit == lb)     // the value is in pounds
+  {
+    weightLB = raw;
+  }
+  else if (unit == kg) // kilograms
+  {
+    weightLB = raw * KG_TO_LB_CONVERSION_FACTOR; // Convert to lbs
+
+#ifdef DEBUG_SCALES
+    Serial.println("Weight Converted to Lbs: " + String(weightLB));
+#endif
+  }
+
+  // Check if the weight is within scales limits
+  if (weightLB >= SCALES_MIN_WEIGHT_LB && weightLB <= SCALES_MAX_WEIGHT_LB)
   {
 #ifdef DEBUG_SCALES
     Serial.println("Weight Valid");
 #endif
 
     // Calculate Weight
-    float convertedWeight = 0.00;                          // We need a float variable for our float math below to avoid rounding issues
-    convertedWeight = raw * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
-    scalesWeight = convertedWeight;                        // Now our math is done, so we can convert it to an integer
+    float convertedWeight = 0.00;                               // We need a float variable for our float math below to avoid rounding issues
+    convertedWeight = weightLB * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
+    scalesWeight = round(convertedWeight);                      // Now our math is done, so we can convert it to an integer
 
 #ifdef DEBUG_SCALES
     Serial.println("Converted Weight: " + String(scalesWeight));
@@ -579,6 +661,52 @@ void scalesCalcWeight(float raw)
     Serial.println("Weight Invalid!");
 #endif
   }
+}
+
+// Loops through a serial response, comparing it to a good response and using a mask to eliminate variables
+bool verifyResponse(char *data, char *format, char *mask)
+{
+#ifdef DEBUG_SCALES_VERIFY
+  Serial.println("Verifying Response");
+#endif
+
+  for (int i = 0; data[i] != '\0' || i >= SCALES_RESPONSE_SIZE - 1; i++)
+  {
+
+    // Only verify the response if it's not a variable
+    if (mask[i] == '0')
+    {
+#ifdef DEBUG_SCALES_VERIFY
+      Serial.print(String(char(data[i])));
+#endif
+
+      if (data[i] != format[i]) // There's a discrepency
+      {
+#ifdef DEBUG_SCALES_VERIFY
+        Serial.print(" != ");
+        Serial.println(String(char(format[i])));
+        Serial.println("Verification Failed!");
+#endif
+        return false;
+      }
+      else
+      {
+#ifdef DEBUG_SCALES_VERIFY
+        Serial.print(" = ");
+#endif
+      }
+
+#ifdef DEBUG_SCALES_VERIFY
+      Serial.println(String(char(format[i])));
+#endif
+    }
+  }
+
+// If we reached this point, there are no discrepencies
+#ifdef DEBUG_SCALES_VERIFY
+  Serial.println("Verification Succeeded");
+#endif
+  return true;
 }
 
 // Returns true if the character is a number or decimal point.
