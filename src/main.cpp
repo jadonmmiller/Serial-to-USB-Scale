@@ -264,15 +264,15 @@ const uint8_t descriptor[] = {
 #define USAGE_STATUS_REQUIRES_ZERO 8
 
 // Configuration Settings
-#define SOFTWARE_VERSION 0.2
-#define HARDWARE_VERSION 0.1
+#define SOFTWARE_VERSION 0.3
+#define HARDWARE_VERSION 0.2
 
-// #define ENABLE_DEBUG
+#define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG_BAUD 9600
 #define HEARTBEAT_PIN LED_BUILTIN
 #define HEARTBEAT_INTERVAL 250
-#define DEBUG_HID
+//#define DEBUG_HID
 #define DEBUG_SCALES
 #endif
 
@@ -546,7 +546,9 @@ void scalesParse()
 #endif
 
         // Calculate Weight
-        scalesWeight = parsedNumbers[SCALES_WEIGHT_NUMBER] * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
+        float convertedWeight = 0.00; // We need a float variable for our float math below to avoid rounding issues
+        convertedWeight = parsedNumbers[SCALES_WEIGHT_NUMBER] * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
+        scalesWeight = convertedWeight; // Now our math is done, so we can convert it to an integer
 #ifdef DEBUG_SCALES
         Serial.println("Converted Weight: " + String(scalesWeight));
 #endif
