@@ -272,7 +272,7 @@ const uint8_t descriptor[] = {
 #define DEBUG_BAUD 9600
 #define HEARTBEAT_PIN LED_BUILTIN
 #define HEARTBEAT_INTERVAL 250
-//#define DEBUG_HID
+// #define DEBUG_HID
 #define DEBUG_SCALES
 #endif
 
@@ -287,6 +287,7 @@ const uint8_t descriptor[] = {
 #define SCALES_NUMBER_OF_VALUES 3
 #define SCALES_WEIGHT_NUMBER 0
 #define SCALES_TERMINATION "\n\n"
+#define SCALES_RESPONSE_FORMAT_LB "GR WT:     0.12 lb\r\nCOUNT:            0\n\rPIECE WT: -------- lb\r\n\n"
 #define SCALES_MAX_WEIGHT 100.00
 #define SCALES_MIN_WEIGHT -100.00
 #endif
@@ -316,7 +317,9 @@ void HIDInit();
 void HIDUpdate();
 void scalesInit();
 void scalesPoll();
-void scalesParse();
+void scalesReceive();
+void scalesParse(char *data);
+void scalesCalcWeight(float raw);
 bool isNumeric(char c);
 
 void setup()
@@ -347,7 +350,7 @@ void loop()
   scalesPoll();
 
   // Check for incoming scales data
-  scalesParse();
+  scalesReceive();
 }
 
 #ifdef ENABLE_DEBUG
@@ -449,11 +452,10 @@ void scalesPoll()
   }
 }
 
-// Watches the serial line and parses data when it's received
-void scalesParse()
+// Watches the serial line and receives data
+void scalesReceive()
 {
   static char receivedData[SCALES_RESPONSE_SIZE + 1] = "\0"; // Add 1 for null termination
-  static float parsedNumbers[SCALES_NUMBER_OF_VALUES + 1] = {0};
 
   static byte bufferIndex = 0;
 
@@ -488,78 +490,94 @@ void scalesParse()
 #endif
 
       // Parse the recieved data
+      scalesParse(receivedData);
+    }
+  }
+}
+
+// Parses the data received from the scales
+void scalesParse(char *data)
+{
+  static float parsedNumbers[SCALES_NUMBER_OF_VALUES + 1] = {0};
+
 #ifdef DEBUG_SCALES
-      Serial.println("Parsing Data");
+  Serial.println("Parsing Data");
 #endif
 
-      byte numberIndex = 0; // Counts the different values we pull from the data
+  byte numberIndex = 0; // Counts the different values we pull from the data
 
-      // Loop through the data, pulling out numbers
-      for (int i = 0; receivedData[i] != '\0' || i >= SCALES_RESPONSE_SIZE - 1; i++)
+  // Loop through the data, pulling out numbers
+  for (int i = 0; data[i] != '\0' || i >= SCALES_RESPONSE_SIZE - 1; i++)
+  {
+
+#ifdef DEBUG_SCALES
+    Serial.println("Parsing: " + String(char(data[i])));
+#endif
+
+    if (isNumeric(data[i])) // Starting a number
+    {
+#ifdef DEBUG_SCALES
+      Serial.println("Starting Number");
+#endif
+      parsedNumbers[numberIndex] = strtof(data + i, NULL);
+#ifdef DEBUG_SCALES
+      Serial.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
+#endif
+      // Loop through the rest of the number's characters
+      while (isNumeric(data[i + 1]))
       {
-
+        i++;
 #ifdef DEBUG_SCALES
-        Serial.println("Parsing: " + String(char(receivedData[i])));
-#endif
-
-        if (isNumeric(receivedData[i])) // Starting a number
-        {
-#ifdef DEBUG_SCALES
-          Serial.println("Starting Number");
-#endif
-          parsedNumbers[numberIndex] = strtof(receivedData + i, NULL);
-#ifdef DEBUG_SCALES
-          Serial.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
-#endif
-          // Loop through the rest of the number's characters
-          while (isNumeric(receivedData[i + 1]))
-          {
-            i++;
-#ifdef DEBUG_SCALES
-            Serial.println("Ignoring: " + String(char(receivedData[i])));
-#endif
-          }
-
-          // Get ready to receive the next value
-          if (numberIndex < SCALES_NUMBER_OF_VALUES)
-          {
-            numberIndex++;
-          }
-          else // We're gonna overflow the array
-          {
-#ifdef ENABLE_DEBUG
-            Serial.println("Too Many Scales Values Found! - " + String(numberIndex + 1)); // Add 1 to account for zero-based array
-#endif
-            break;
-          }
-        }
-      } // Finished looping through data
-
-#ifdef DEBUG_SCALES
-      Serial.println("Weight Parsed: " + String(parsedNumbers[SCALES_WEIGHT_NUMBER]));
-#endif
-
-      if (parsedNumbers[SCALES_WEIGHT_NUMBER] >= SCALES_MIN_WEIGHT && parsedNumbers[SCALES_WEIGHT_NUMBER] <= SCALES_MAX_WEIGHT) // Weight is within scales limits
-      {
-#ifdef DEBUG_SCALES
-        Serial.println("Weight Valid");
-#endif
-
-        // Calculate Weight
-        float convertedWeight = 0.00; // We need a float variable for our float math below to avoid rounding issues
-        convertedWeight = parsedNumbers[SCALES_WEIGHT_NUMBER] * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
-        scalesWeight = convertedWeight; // Now our math is done, so we can convert it to an integer
-#ifdef DEBUG_SCALES
-        Serial.println("Converted Weight: " + String(scalesWeight));
+        Serial.println("Ignoring: " + String(char(data[i])));
 #endif
       }
-      else
+
+      // Get ready to receive the next value
+      if (numberIndex < SCALES_NUMBER_OF_VALUES)
       {
-#ifdef DEBUG_SCALES
-        Serial.println("Weight Invalid!");
+        numberIndex++;
+      }
+      else // We're gonna overflow the array
+      {
+#ifdef ENABLE_DEBUG
+        Serial.println("Too Many Scales Values Found! - " + String(numberIndex + 1)); // Add 1 to account for zero-based array
 #endif
+        break;
       }
     }
+  } // Finished looping through data
+
+#ifdef DEBUG_SCALES
+  Serial.println("Weight Parsed: " + String(parsedNumbers[SCALES_WEIGHT_NUMBER]));
+#endif
+
+  // Convert and save the weight
+  scalesCalcWeight(parsedNumbers[SCALES_WEIGHT_NUMBER]);
+}
+
+// Converts the weight from the scales to what the computer wants
+void scalesCalcWeight(float raw)
+{
+  if (raw >= SCALES_MIN_WEIGHT && raw <= SCALES_MAX_WEIGHT) // Weight is within scales limits
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Weight Valid");
+#endif
+
+    // Calculate Weight
+    float convertedWeight = 0.00;                          // We need a float variable for our float math below to avoid rounding issues
+    convertedWeight = raw * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
+    scalesWeight = convertedWeight;                        // Now our math is done, so we can convert it to an integer
+
+#ifdef DEBUG_SCALES
+    Serial.println("Converted Weight: " + String(scalesWeight));
+#endif
+  }
+  else
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Weight Invalid!");
+#endif
   }
 }
 
