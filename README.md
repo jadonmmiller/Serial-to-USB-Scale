@@ -1,6 +1,9 @@
 # Serial-to-USB-Scale
 This is a STM32F1-based Serial to USBHID Scales Converter.
 
+**I am working on porting this from the STM32 to a cheaper, more powerful RP2040 dev board.**
+The *main* branch is the current stable STM32 version, the *STM32-Port* branch is the last stable version for that hardware (preserved on the second branch because *main* will become the RP2040 port when it's finished), and the *RP2040-Port* branch is the working branch for the port.
+
 It started when I bought a shipping scales with a serial connection a few months ago. I wanted to connect that to my shipping software, which expected a scales running the USB-HID communications protocol. That's when this adapter came to be!
 
 I use the Bluepill to send a character to the scales, requesting data. The scales then responds with a text string containing the weight and some other details. The adapter parses the string, then sends the data onto the computer.
