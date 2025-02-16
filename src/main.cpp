@@ -1,26 +1,52 @@
 /*********************************************************************
- Adafruit invests time and resources providing this open source code,
- please support Adafruit and open-source hardware by purchasing
- products from Adafruit!
+This code communicates with an industrial scales over RS232 via a
+MAX3232 chip. It then emulates a USB HID scales for integration with
+shipping software such as Veeqo.
 
- MIT license, check LICENSE for more information
- Copyright (c) 2019 Ha Thach for Adafruit Industries
- All text above, and the splash screen below must be included in
- any redistribution
+Created by Jadon Miller, Miller Industrial Services - 2/15/2025
+License: The Unlicense
 *********************************************************************/
+
+#include <Arduino.h>
 #include "Adafruit_TinyUSB.h"
 
-void hid_report_callback(uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize);
+// ---------- Constants ----------
+// HID Spec Constants
+#define USAGE_SCALE_CLASS 1
+#define USAGE_CLASS_I_METRIC 2
+#define USAGE_CLASS_II_METRIC 3
+#define USAGE_CLASS_III_METRIC 4
+#define USAGE_CLASS_IIIL_METRIC 5
+#define USAGE_CLASS_IV_METRIC 6
+#define USAGE_CLASS_III_ENGLISH 7
+#define USAGE_CLASS_IIIL_ENGLISH 8
+#define USAGE_CLASS_IV_ENGLISH 9
+#define USAGE_SCALE_CLASS_GENERIC 10
+#define USAGE_WEIGHT_UNIT_MILLIGRAM 1
+#define USAGE_WEIGHT_UNIT_GRAM 2
+#define USAGE_WEIGHT_UNIT_KILOGRAM 3
+#define USAGE_WEIGHT_UNIT_CARATS 4
+#define USAGE_WEIGHT_UNIT_TAELS 5
+#define USAGE_WEIGHT_UNIT_GRAINS 6
+#define USAGE_WEIGHT_UNIT_PENNYWEIGHTS 7
+#define USAGE_WEIGHT_UNIT_METRIC_TON 8
+#define USAGE_WEIGHT_UNIT_AVOIR_TON 9
+#define USAGE_WEIGHT_UNIT_TROY_OUNCE 10
+#define USAGE_WEIGHT_UNIT_OUNCE 11
+#define USAGE_WEIGHT_UNIT_POUND 12
+#define USAGE_STATUS_FAULT 1
+#define USAGE_STATUS_STABLE_AT_ZERO 2
+#define USAGE_STATUS_IN_MOTION 3
+#define USAGE_STATUS_WEIGHT_STABLE 4
+#define USAGE_STATUS_UNDER_ZERO 5
+#define USAGE_STATUS_OVER_LIMIT 6
+#define USAGE_STATUS_REQUIRES_CAL 7
+#define USAGE_STATUS_REQUIRES_ZERO 8
 
-#define ARDUINO_FUNHOUSE_ESP32S2
+// Math
+#define KG_TO_LB_CONVERSION_FACTOR 2.20462262
 
-/* This sketch demonstrates USB HID keyboard.
- * - PIN A0-A3 is used to send digit '0' to '3' respectively
- *   (On the RP2040, pins D0-D5 used)
- * - LED and/or Neopixels will be used as Capslock indicator
- */
-
-// HID report descriptor
+// HID Report Descriptor
 const uint8_t descriptor[] = {
     0x05, 0x8D,                   // Usage Page (Scale Page)
     0x09, 0x20,                   // Usage (Scale Device)
@@ -136,83 +162,25 @@ const uint8_t descriptor[] = {
     0xC0,                         // End Collection
 };
 
-// Constants
-#define USAGE_SCALE_CLASS 1
-#define USAGE_CLASS_I_METRIC 2
-#define USAGE_CLASS_II_METRIC 3
-#define USAGE_CLASS_III_METRIC 4
-#define USAGE_CLASS_IIIL_METRIC 5
-#define USAGE_CLASS_IV_METRIC 6
-#define USAGE_CLASS_III_ENGLISH 7
-#define USAGE_CLASS_IIIL_ENGLISH 8
-#define USAGE_CLASS_IV_ENGLISH 9
-#define USAGE_SCALE_CLASS_GENERIC 10
-#define USAGE_WEIGHT_UNIT_MILLIGRAM 1
-#define USAGE_WEIGHT_UNIT_GRAM 2
-#define USAGE_WEIGHT_UNIT_KILOGRAM 3
-#define USAGE_WEIGHT_UNIT_CARATS 4
-#define USAGE_WEIGHT_UNIT_TAELS 5
-#define USAGE_WEIGHT_UNIT_GRAINS 6
-#define USAGE_WEIGHT_UNIT_PENNYWEIGHTS 7
-#define USAGE_WEIGHT_UNIT_METRIC_TON 8
-#define USAGE_WEIGHT_UNIT_AVOIR_TON 9
-#define USAGE_WEIGHT_UNIT_TROY_OUNCE 10
-#define USAGE_WEIGHT_UNIT_OUNCE 11
-#define USAGE_WEIGHT_UNIT_POUND 12
-#define USAGE_STATUS_FAULT 1
-#define USAGE_STATUS_STABLE_AT_ZERO 2
-#define USAGE_STATUS_IN_MOTION 3
-#define USAGE_STATUS_WEIGHT_STABLE 4
-#define USAGE_STATUS_UNDER_ZERO 5
-#define USAGE_STATUS_OVER_LIMIT 6
-#define USAGE_STATUS_REQUIRES_CAL 7
-#define USAGE_STATUS_REQUIRES_ZERO 8
+// ---------- Structs and Enums ----------
+// Scales RS232 Profile
+struct scalesProfile_t
+{
+  const char name[11];
+  const int baudRate;
+  const char requestStr[3];
+  const int requestInterval;
+  const char responseTermination[3];
+  const byte numResponseValues;
+  const byte responseWeightValueIndex;
+  const char responseFormatLbs[200];
+  const char responseFormatKgs[200];
+  const char responseValueMask[200];
+  const float minWeight; // lbs
+  const float maxWeight;
+};
 
-#define SCALE_DATA_REPORT_ID 3
-
-#define KG_TO_LB_CONVERSION_FACTOR 2.20462262
-
-// Configuration Settings
-#define SOFTWARE_VERSION 0.4
-#define HARDWARE_VERSION 0.2
-
-#define ENABLE_HEARTBEAT
-#ifdef ENABLE_HEARTBEAT
-#define HEARTBEAT_PIN LED_BUILTIN
-#define HEARTBEAT_INTERVAL 250
-#endif
-
-// #define ENABLE_DEBUG
-#ifdef ENABLE_DEBUG
-#define DEBUG_BAUD 9600
-// #define DEBUG_HID
-#define DEBUG_SCALES
-#ifdef DEBUG_SCALES
-// #define DEBUG_SCALES_RECEIVE
-// #define DEBUG_SCALES_VERIFY
-// #define DEBUG_SCALES_PARSE
-#endif
-#endif
-
-#define HID_PRECISION_DIGITS 2
-
-#define SCALES_BRAND_AVERY
-#ifdef SCALES_BRAND_AVERY
-#define SCALES_BAUD 9600
-#define SCALES_POLL_INTERVAL 1500
-#define SCALES_POLL_STRING "p"
-#define SCALES_RESPONSE_SIZE 75
-#define SCALES_NUMBER_OF_VALUES 3
-#define SCALES_WEIGHT_NUMBER 0
-#define SCALES_TERMINATION "\n\n"
-#define SCALES_RESPONSE_FORMAT_LB "GROSS WT:     0.00 lb\r\nCOUNT:            0\r\nPIECE WT: -------- lb\r\n\n"
-#define SCALES_RESPONSE_FORMAT_KG "GROSS WT:     0.00 kg\r\nCOUNT:            0\r\nPIECE WT: -------- kg\r\n\n"
-#define SCALES_RESPONSE_FORMAT_MASK "00000000001111111100000000000011111111111100000000000011111111000000" // Zeros indicate data that nevver changes, and ones indicate variables
-#define SCALES_MAX_WEIGHT_LB 100.00
-#define SCALES_MIN_WEIGHT_LB -100.00
-#endif
-
-// HID Variables
+// HID Report
 typedef struct
 {
   uint8_t status = USAGE_STATUS_WEIGHT_STABLE;
@@ -222,29 +190,487 @@ typedef struct
 } __packed dataReport_t;
 dataReport_t dataReport;
 
-// USB HID object
+// Unit Enum
+enum unit_t
+{
+  lb,
+  kg
+};
+
+// ---------- Configuration -----------
+#define SOFTWARE_VERSION 1.0
+#define HARDWARE_VERSION 1.0
+
+// Status and Debug
+#define ENABLE_STATUS_LED
+#ifdef ENABLE_STATUS_LED
+#include <FastLED.h>
+CRGB statusLED[1];
+#define STATUS_LED_PIN 16
+#define STATUS_LED_BRIGHTNESS 150
+#endif
+
+#define ENABLE_DEBUG
+#ifdef ENABLE_DEBUG
+#define DEBUG_PORT Serial
+#define DEBUG_BAUD 9600
+#define DEBUG_HID
+#define DEBUG_SCALES
+#ifdef DEBUG_SCALES
+#define DEBUG_SCALES_RECEIVE
+#define DEBUG_SCALES_VERIFY
+#define DEBUG_SCALES_PARSE
+#endif
+#endif
+
+// USB Configuration
+#define HID_PRECISION_DIGITS 2 // Precision for HID reports
+#define SCALE_DATA_REPORT_ID 3
+
+// Scales Configuration
+#define SCALES_MAX_RESPONSE_SIZE 75 // The most characters a scale will send over serial
+scalesProfile_t scalesProfile[1] = {
+    {
+        "Avery",                                                                       // Avery ZK830 Indicator
+        9600,                                                                          // Baud Rate
+        "p",                                                                           // Request String
+        1500,                                                                          // Request Interval
+        "\n\n",                                                                        // Response Termination
+        3,                                                                             // Number of Values in Response
+        0,                                                                             // Index of Weight Value in Response
+        "GROSS WT:     0.00 lb\r\nCOUNT:            0\r\nPIECE WT: -------- lb\r\n\n", // Response Format in Pounds
+        "GROSS WT:     0.00 kg\r\nCOUNT:            0\r\nPIECE WT: -------- kg\r\n\n", // Response Format in Kilograms
+        // Response mask, zeros indicate data that nevver changes, and ones indicate variables
+        "00000000001111111100000000000011111111111100000000000011111111000000",
+        100.00, // Maximum Weight
+        -50.00  // Minimum Weight
+    }};
+
+// ---------- Runtime Variables ----------
+// HID Instance
 Adafruit_USBD_HID usb_hid;
 
-//------------- Input Pins -------------//
-// Array of pins and its keycode.
-// Notes: these pins can be replaced by PIN_BUTTONn if defined in setup()
-#ifdef ARDUINO_ARCH_RP2040
-uint8_t pins[] = {15, 26, 27, 28};
-#else
-uint8_t pins[] = {15, 26, 27, 28};
+// Weight Formated for HID Response
+int HIDWeight = 0;
+
+// ---------- Function Definitions ----------
+void hid_report_callback(uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize);
+void statusLEDInit();
+void statusLEDUpdate();
+void debugInit();
+void HIDInit();
+void HIDUpdate();
+void scalesInit();
+void scalesPoll();
+void scalesReceive();
+void scalesParse(char *data);
+void scalesCalcWeight(float raw, unit_t unit);
+bool verifyResponse(char *data, char *format, char *mask);
+bool isNumeric(char c);
+
+// Setup
+// Inits and configures the system on boot
+void setup()
+{
+// Init the status LED
+#ifdef ENABLE_STATUS_LED
+  statusLEDInit();
 #endif
 
-// number of pins
-uint8_t pincount = sizeof(pins) / sizeof(pins[0]);
-
-// For keycode definition check out https://github.com/hathach/tinyusb/blob/master/src/class/hid/hid.h
-uint8_t hidcode[] = {HID_KEY_0, HID_KEY_1, HID_KEY_2, HID_KEY_3};
-
-#if defined(ARDUINO_SAMD_CIRCUITPLAYGROUND_EXPRESS) || defined(ARDUINO_NRF52840_CIRCUITPLAY) || defined(ARDUINO_FUNHOUSE_ESP32S2)
-bool activeState = true;
-#else
-bool activeState = false;
+// Start the debugger
+#ifdef ENABLE_DEBUG
+  debugInit();
 #endif
+
+  // Start the HID program
+  HIDInit();
+
+  // Start the scales communications
+  scalesInit();
+}
+
+void loop()
+{
+// Update the heartbeat
+#ifdef ENABLE_HEARTBEAT
+  heartbeatUpdate();
+#endif
+
+  // Send an HID report
+  HIDUpdate();
+
+  // Check if it's time to poll the scales
+  //scalesPoll();
+
+  // Check for incoming scales data
+  //scalesReceive();
+}
+
+#ifdef ENABLE_STATUS_LED
+// Sets up the status LED
+void statusLEDInit()
+{
+  FastLED.addLeds<WS2812, STATUS_LED_PIN, RGB>(statusLED, 1);
+  FastLED.setBrightness(STATUS_LED_BRIGHTNESS);
+  statusLED[0] = CRGB::Red;
+  FastLED.show();
+}
+
+// Toggles the heartbeat LED
+void statusLEDUpdate()
+{
+}
+#endif
+
+#ifdef ENABLE_DEBUG
+// Initializes the debug serial link
+void debugInit()
+{
+  Serial.begin(DEBUG_BAUD);
+  Serial.println("RS-232 to USB Scales Adapter");
+  Serial.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
+  Serial.println("---------------------------------------------------");
+}
+#endif
+
+// Initializes the HID Components
+void HIDInit()
+{
+#ifdef DEBUG_HID
+  Serial.print("Starting HID");
+#endif
+
+  usb_hid.setBootProtocol(HID_ITF_PROTOCOL_NONE);
+  usb_hid.setPollInterval(2);
+  usb_hid.setReportDescriptor(descriptor, sizeof(descriptor));
+  usb_hid.setStringDescriptor("Scales Adapter");
+
+  usb_hid.begin();
+
+#ifdef ENABLE_DEBUG
+  Serial.println();
+  Serial.println("HID Started");
+#endif
+}
+
+// Sends a report to the USB Host
+void HIDUpdate()
+{
+#ifdef DEBUG_HID
+  Serial.println("Sending HID Report");
+#endif
+
+  // Create a data report
+  dataReport.unit = USAGE_WEIGHT_UNIT_POUND;
+  dataReport.scaling = -HID_PRECISION_DIGITS; // -2 makes the scale expect 1.23 to be encoded as 123
+  dataReport.weight = HIDWeight;
+
+  // Send the report
+  // dataReporter.sendReport();
+
+#ifdef DEBUG_HID
+  Serial.println("HID Report Sent");
+#endif
+}
+
+// Starts the serial link with the scales
+void scalesInit()
+{
+#ifdef DEBUG_SCALES
+  Serial.println("Starting Scales");
+#endif
+
+  // Serial2.begin(SCALES_BAUD);
+
+#ifdef ENABLE_DEBUG
+  Serial.println("Scales Started");
+#endif
+}
+/*
+// Polls the scale after a certain amount of time
+void scalesPoll()
+{
+  static unsigned long scalesPollTime = 0;
+  if (millis() - scalesPollTime >= scalesProfile[0].requestInterval)
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Requesting Data from Scales - Sent \"" + String(scalesProfile[0].requestStr) + "\"");
+#endif
+    // Request Weight Information from the Scales
+    // Serial2.println(SCALES_POLL_STRING);
+    scalesPollTime = millis();
+  }
+}
+
+// Watches the serial line and receives data
+void scalesReceive()
+{
+  static char receivedData[SCALES_MAX_RESPONSE_SIZE + 1] = "\0"; // Add 1 for null termination
+
+  static byte bufferIndex = 0;
+  /*
+    // Receive new data
+    if (Serial2.available() > 0)
+    {
+  #ifdef DEBUG_SCALES_RECEIVE
+      Serial.println("Receiving '" + String(char(Serial2.peek())) + "'");
+  #endif
+      receivedData[bufferIndex] = Serial2.read();
+      receivedData[bufferIndex + 1] = '\0';       // Terminate the string
+      if (bufferIndex < SCALES_RESPONSE_SIZE - 1) // Check for buffer overflows
+      {
+        bufferIndex++;
+      }
+      else
+      {
+  #ifdef ENABLE_DEBUG
+        Serial.println("Scales Receive Buffer Overflow! - Size: " + String(bufferIndex + 1));
+  #endif
+        bufferIndex = 0; // Start overwriting the buffer
+      }
+
+      // Watch for the transmit termination
+      if (strstr(receivedData, SCALES_TERMINATION) != NULL)
+      {
+        bufferIndex = 0; // Reset the reading procedure
+  #ifdef DEBUG_SCALES_RECEIVE
+        Serial.println("Termination Found: " + String(SCALES_TERMINATION));
+  #endif
+  #ifdef DEBUG_SCALES
+        Serial.println("Data Received:");
+        Serial.println(receivedData);
+  #endif
+
+        // Parse the recieved data
+        scalesParse(receivedData);
+      }
+    }
+}
+
+// Verifies and parses the data received from the scales
+void scalesParse(char *data)
+{
+  // Compare the response to known formats, and identify the unit
+  unit_t responseUnit;
+  char formatLB[SCALES_MAX_RESPONSE_SIZE + 1] = 
+  scalesProfile[0].responseFormatLbs;
+  char formatKG[SCALES_MAX_RESPONSE_SIZE + 1] = scalesProfile[0].responseFormatKgs[0];
+  char mask[SCALES_MAX_RESPONSE_SIZE + 1] = scalesProfile[0].responseValueMask[0];
+
+  if (verifyResponse(data, formatLB, mask))
+  {
+    // We've received a good response in lb format
+    responseUnit = lb;
+
+#ifdef DEBUG_SCALES
+    Serial.println("Good Response Received - Pounds");
+#endif
+  }
+  else if (verifyResponse(data, formatKG, mask))
+  {
+    // Good response in kg format
+    responseUnit = kg;
+
+#ifdef DEBUG_SCALES
+    Serial.println("Good Response Received - Kilograms");
+#endif
+  }
+  else
+  {
+    // Bad Response
+#ifdef ENABLE_DEBUG
+    Serial.println("Scales response isn't in a known format!");
+    return;
+#endif
+  }
+
+  // Start parsing the data
+  static float parsedNumbers[scalesProfile[0].numResponseValues + 1] = {0};
+
+#ifdef DEBUG_SCALES_PARSE
+  Serial.println("Parsing Data");
+#endif
+
+  byte numberIndex = 0; // Counts the different values we pull from the data
+
+  // Loop through the data, pulling out numbers
+  for (int i = 0; data[i] != '\0' || i >= SCALES_MAX_RESPONSE_SIZE - 1; i++)
+  {
+
+#ifdef DEBUG_SCALES_PARSE
+    Serial.println("Parsing: " + String(char(data[i])));
+#endif
+
+    if (isNumeric(data[i])) // Starting a number
+    {
+#ifdef DEBUG_SCALES_PARSE
+      Serial.println("Starting Number");
+#endif
+      parsedNumbers[numberIndex] = strtof(data + i, NULL);
+#ifdef DEBUG_SCALES_PARSE
+      Serial.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
+#endif
+      // Loop through the rest of the number's characters
+      while (isNumeric(data[i + 1]))
+      {
+        i++;
+#ifdef DEBUG_SCALES_PARSE
+        Serial.println("Ignoring: " + String(char(data[i])));
+#endif
+      }
+
+      // Get ready to receive the next value
+      if (numberIndex < scalesProfile[0].numResponseValues)
+      {
+        numberIndex++;
+      }
+      else // We're gonna overflow the array
+      {
+#ifdef ENABLE_DEBUG
+        Serial.println("Too Many Scales Values Found! - " + String(numberIndex + 1)); // Add 1 to account for zero-based array
+#endif
+        break;
+      }
+    }
+  } // Finished looping through data
+
+#ifdef DEBUG_SCALES
+  Serial.println("Weight Parsed: " + String(parsedNumbers[scalesProfile[0].responseWeightValueIndex]));
+#endif
+
+  // Convert and save the weight
+  scalesCalcWeight(parsedNumbers[scalesProfile[0].responseWeightValueIndex], responseUnit);
+}
+
+// Converts the weight from the scales to what the computer wants
+void scalesCalcWeight(float raw, unit_t unit)
+{
+  // Convert the weight to lbs if necessary
+  float weightLB = 0; // The weight, converted to lbs
+  if (unit == lb)     // the value is in pounds
+  {
+    weightLB = raw;
+  }
+  else if (unit == kg) // kilograms
+  {
+    weightLB = raw * KG_TO_LB_CONVERSION_FACTOR; // Convert to lbs
+
+#ifdef DEBUG_SCALES
+    Serial.println("Weight Converted to Lbs: " + String(weightLB));
+#endif
+  }
+
+  // Check if the weight is within scales limits
+  if (weightLB >= scalesProfile[0].minWeight && weightLB <= scalesProfile[0].maxWeight)
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Weight Valid");
+#endif
+
+    // Calculate Weight
+    float convertedWeight = 0.00;                               // We need a float variable for our float math below to avoid rounding issues
+    convertedWeight = weightLB * pow(10, HID_PRECISION_DIGITS); // Convert float to integer
+    HIDWeight = round(convertedWeight);                         // Now our math is done, so we can convert it to an integer
+
+#ifdef DEBUG_SCALES
+    Serial.println("Converted Weight: " + String(HIDWeight));
+#endif
+  }
+  else
+  {
+#ifdef DEBUG_SCALES
+    Serial.println("Weight Invalid!");
+#endif
+  }
+}
+
+// Loops through a serial response, comparing it to a good response and using a mask to eliminate variables
+bool verifyResponse(char *data, char *format, char *mask)
+{
+#ifdef DEBUG_SCALES_VERIFY
+  Serial.println("Verifying Response");
+#endif
+
+  for (int i = 0; data[i] != '\0' || i >= SCALES_MAX_RESPONSE_SIZE - 1; i++)
+  {
+
+    // Only verify the response if it's not a variable
+    if (mask[i] == '0')
+    {
+#ifdef DEBUG_SCALES_VERIFY
+      Serial.print(String(char(data[i])));
+#endif
+
+      if (data[i] != format[i]) // There's a discrepency
+      {
+#ifdef DEBUG_SCALES_VERIFY
+        Serial.print(" != ");
+        Serial.println(String(char(format[i])));
+        Serial.println("Verification Failed!");
+#endif
+        return false;
+      }
+      else
+      {
+#ifdef DEBUG_SCALES_VERIFY
+        Serial.print(" = ");
+#endif
+      }
+
+#ifdef DEBUG_SCALES_VERIFY
+      Serial.println(String(char(format[i])));
+#endif
+    }
+  }
+
+// If we reached this point, there are no discrepencies
+#ifdef DEBUG_SCALES_VERIFY
+  Serial.println("Verification Succeeded");
+#endif
+  return true;
+}
+
+// Returns true if the character is a number or decimal point.
+bool isNumeric(char c)
+{
+  switch (c)
+  {
+  case '0':
+  case '1':
+  case '2':
+  case '3':
+  case '4':
+  case '5':
+  case '6':
+  case '7':
+  case '8':
+  case '9':
+  case '.':
+    return true;
+    break;
+  default:
+    return false;
+    break;
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // the setup function runs once when you press reset or power the board
 void setup()
@@ -312,4 +738,4 @@ void loop()
     ms = millis();
     process_scales();
   }
-}
+}*/
