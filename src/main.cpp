@@ -205,16 +205,18 @@ enum unit_t
 #define ENABLE_STATUS_LED
 #ifdef ENABLE_STATUS_LED
 #include <FastLED.h>
-CRGB statusLED[1];
+CRGB statusLED[1];            // FastLED Object
+int statusLEDHue = 0;         // Tracks hue for animations
 #define STATUS_LED_PIN 16
 #define STATUS_LED_BRIGHTNESS 150
+#define STATUS_LED_FAST_BLINK_MS 150
 #endif
 
 #define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG_PORT Serial
 #define DEBUG_BAUD 9600
-#define DEBUG_HID
+// #define DEBUG_HID
 #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
 #define DEBUG_SCALES_RECEIVE
@@ -228,6 +230,7 @@ CRGB statusLED[1];
 #define SCALE_DATA_REPORT_ID 3
 
 // Scales Configuration
+#define SCALES_PORT Serial1         // The serial port used by the RS232 hardware
 #define SCALES_MAX_RESPONSE_SIZE 75 // The most characters a scale will send over serial
 scalesProfile_t scalesProfile[1] = {
     {
@@ -252,6 +255,12 @@ Adafruit_USBD_HID usb_hid;
 
 // Weight Formated for HID Response
 int HIDWeight = 0;
+
+// Connected to a scales
+bool scalesConnected = false;
+
+// Scales Profile in Use
+byte activeScalesProfile = 0;
 
 // ---------- Function Definitions ----------
 void hid_report_callback(uint8_t report_id, hid_report_type_t report_type, uint8_t const *buffer, uint16_t bufsize);
@@ -291,19 +300,19 @@ void setup()
 
 void loop()
 {
-// Update the heartbeat
-#ifdef ENABLE_HEARTBEAT
-  heartbeatUpdate();
+// Update the status LED
+#ifdef ENABLE_STATUS_LED
+  statusLEDUpdate();
 #endif
 
   // Send an HID report
   HIDUpdate();
 
   // Check if it's time to poll the scales
-  //scalesPoll();
+  // scalesPoll();
 
   // Check for incoming scales data
-  //scalesReceive();
+  // scalesReceive();
 }
 
 #ifdef ENABLE_STATUS_LED
@@ -312,13 +321,37 @@ void statusLEDInit()
 {
   FastLED.addLeds<WS2812, STATUS_LED_PIN, RGB>(statusLED, 1);
   FastLED.setBrightness(STATUS_LED_BRIGHTNESS);
-  statusLED[0] = CRGB::Red;
-  FastLED.show();
 }
 
-// Toggles the heartbeat LED
+// Updates the status LED
 void statusLEDUpdate()
 {
+  // Blink a fast red error code if the device is ever not connected over HID
+  if (!TinyUSBDevice.mounted())
+  {
+    EVERY_N_MILLISECONDS(STATUS_LED_FAST_BLINK_MS)
+    {
+      if (statusLED[0] == CRGB::Red)
+      {
+        statusLED[0] = CRGB::Black;
+      }
+      else
+      {
+        statusLED[0] = CRGB::Red;
+      }
+      FastLED.show();
+    }
+  }
+  else if (!scalesConnected)
+  {
+    // If the connected over USB, but not to the serial device do a fast rainbow animation
+    EVERY_N_MILLISECONDS(50)
+    {
+      statusLEDHue += 40; // Increment the hue
+      statusLED[0].setHue(statusLEDHue);
+      FastLED.show();
+    }
+  }
 }
 #endif
 
@@ -326,38 +359,65 @@ void statusLEDUpdate()
 // Initializes the debug serial link
 void debugInit()
 {
-  Serial.begin(DEBUG_BAUD);
-  Serial.println("RS-232 to USB Scales Adapter");
-  Serial.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
-  Serial.println("---------------------------------------------------");
+  DEBUG_PORT.begin(DEBUG_BAUD);
+  DEBUG_PORT.println("Miller Industrial Services");
+  DEBUG_PORT.println("RS-232 to USB HID Scales Adapter");
+  DEBUG_PORT.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
+  DEBUG_PORT.println("---------------------------------------------------");
 }
 #endif
 
 // Initializes the HID Components
 void HIDInit()
 {
-#ifdef DEBUG_HID
-  Serial.print("Starting HID");
+#ifdef ENABLE_DEBUG
+  DEBUG_PORT.print("Starting HID... ");
 #endif
 
+  // Configure HID
   usb_hid.setBootProtocol(HID_ITF_PROTOCOL_NONE);
-  usb_hid.setPollInterval(2);
+  usb_hid.setPollInterval(10);
   usb_hid.setReportDescriptor(descriptor, sizeof(descriptor));
   usb_hid.setStringDescriptor("Scales Adapter");
 
-  usb_hid.begin();
-
+  // Start the HID and report failure
+  if (!usb_hid.begin())
+  {
 #ifdef ENABLE_DEBUG
-  Serial.println();
-  Serial.println("HID Started");
+    DEBUG_PORT.println("HID Failed to Start");
 #endif
+  }
+
+  // Wait for HID to connect then check the mounting status
+  delay(500);
+  if (TinyUSBDevice.mounted())
+  {
+#ifdef ENABLE_DEBUG
+    DEBUG_PORT.println("HID Connected");
+#endif
+  }
+  else
+  {
+#ifdef ENABLE_DEBUG
+    DEBUG_PORT.println("HID Failed to Mount");
+#endif
+  }
 }
 
 // Sends a report to the USB Host
 void HIDUpdate()
 {
+  // If HID is busy (e.g. sending previous report, skip the update)
+  if (!usb_hid.ready())
+  {
 #ifdef DEBUG_HID
-  Serial.println("Sending HID Report");
+    DEBUG_PORT.println("HID Report Failed to Send - HID Busy");
+#endif
+    return;
+  }
+
+#ifdef DEBUG_HID
+  DEBUG_PORT.println("Sending HID Report");
 #endif
 
   // Create a data report
@@ -366,10 +426,10 @@ void HIDUpdate()
   dataReport.weight = HIDWeight;
 
   // Send the report
-  // dataReporter.sendReport();
+  usb_hid.sendReport(SCALE_DATA_REPORT_ID, (uint8_t *)&dataReport, sizeof(dataReport));
 
 #ifdef DEBUG_HID
-  Serial.println("HID Report Sent");
+  DEBUG_PORT.println("HID Report Sent");
 #endif
 }
 
@@ -377,15 +437,17 @@ void HIDUpdate()
 void scalesInit()
 {
 #ifdef DEBUG_SCALES
-  Serial.println("Starting Scales");
+  DEBUG_PORT.print("Starting RS232... ");
 #endif
 
-  // Serial2.begin(SCALES_BAUD);
+  // Start the Serial Port
+  SCALES_PORT.begin(scalesProfile[activeScalesProfile].baudRate);
 
 #ifdef ENABLE_DEBUG
-  Serial.println("Scales Started");
+  DEBUG_PORT.println("RS232 Started");
 #endif
 }
+
 /*
 // Polls the scale after a certain amount of time
 void scalesPoll()
@@ -452,7 +514,7 @@ void scalesParse(char *data)
 {
   // Compare the response to known formats, and identify the unit
   unit_t responseUnit;
-  char formatLB[SCALES_MAX_RESPONSE_SIZE + 1] = 
+  char formatLB[SCALES_MAX_RESPONSE_SIZE + 1] =
   scalesProfile[0].responseFormatLbs;
   char formatKG[SCALES_MAX_RESPONSE_SIZE + 1] = scalesProfile[0].responseFormatKgs[0];
   char mask[SCALES_MAX_RESPONSE_SIZE + 1] = scalesProfile[0].responseValueMask[0];
