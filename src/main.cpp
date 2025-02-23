@@ -205,8 +205,8 @@ enum unit_t
 #define ENABLE_STATUS_LED
 #ifdef ENABLE_STATUS_LED
 #include <FastLED.h>
-CRGB statusLED[1];            // FastLED Object
-int statusLEDHue = 0;         // Tracks hue for animations
+CRGB statusLED[1];    // FastLED Object
+int statusLEDHue = 0; // Tracks hue for animations
 #define STATUS_LED_PIN 16
 #define STATUS_LED_BRIGHTNESS 150
 #define STATUS_LED_FAST_BLINK_MS 150
@@ -309,10 +309,10 @@ void loop()
   HIDUpdate();
 
   // Check if it's time to poll the scales
-  // scalesPoll();
+  scalesPoll();
 
   // Check for incoming scales data
-  // scalesReceive();
+  scalesReceive();
 }
 
 #ifdef ENABLE_STATUS_LED
@@ -448,18 +448,17 @@ void scalesInit()
 #endif
 }
 
-/*
 // Polls the scale after a certain amount of time
 void scalesPoll()
 {
   static unsigned long scalesPollTime = 0;
-  if (millis() - scalesPollTime >= scalesProfile[0].requestInterval)
+  if (millis() - scalesPollTime >= scalesProfile[activeScalesProfile].requestInterval)
   {
 #ifdef DEBUG_SCALES
-    Serial.println("Requesting Data from Scales - Sent \"" + String(scalesProfile[0].requestStr) + "\"");
+    DEBUG_PORT.println("Requesting Data from Scales - Sent \"" + String(scalesProfile[activeScalesProfile].requestStr) + "\"");
 #endif
     // Request Weight Information from the Scales
-    // Serial2.println(SCALES_POLL_STRING);
+    SCALES_PORT.println(scalesProfile[activeScalesProfile].requestStr);
     scalesPollTime = millis();
   }
 }
@@ -470,45 +469,45 @@ void scalesReceive()
   static char receivedData[SCALES_MAX_RESPONSE_SIZE + 1] = "\0"; // Add 1 for null termination
 
   static byte bufferIndex = 0;
-  /*
-    // Receive new data
-    if (Serial2.available() > 0)
+
+  // Receive new data
+  if (SCALES_PORT.available() > 0)
+  {
+#ifdef DEBUG_SCALES_RECEIVE
+    DEBUG_PORT.println("Receiving '" + String(char(SCALES_PORT.peek())) + "'");
+#endif
+    receivedData[bufferIndex] = SCALES_PORT.read();
+    receivedData[bufferIndex + 1] = '\0';       // Terminate the string
+    if (bufferIndex < SCALES_MAX_RESPONSE_SIZE - 1) // Check for buffer overflows
     {
-  #ifdef DEBUG_SCALES_RECEIVE
-      Serial.println("Receiving '" + String(char(Serial2.peek())) + "'");
-  #endif
-      receivedData[bufferIndex] = Serial2.read();
-      receivedData[bufferIndex + 1] = '\0';       // Terminate the string
-      if (bufferIndex < SCALES_RESPONSE_SIZE - 1) // Check for buffer overflows
-      {
-        bufferIndex++;
-      }
-      else
-      {
-  #ifdef ENABLE_DEBUG
-        Serial.println("Scales Receive Buffer Overflow! - Size: " + String(bufferIndex + 1));
-  #endif
-        bufferIndex = 0; // Start overwriting the buffer
-      }
-
-      // Watch for the transmit termination
-      if (strstr(receivedData, SCALES_TERMINATION) != NULL)
-      {
-        bufferIndex = 0; // Reset the reading procedure
-  #ifdef DEBUG_SCALES_RECEIVE
-        Serial.println("Termination Found: " + String(SCALES_TERMINATION));
-  #endif
-  #ifdef DEBUG_SCALES
-        Serial.println("Data Received:");
-        Serial.println(receivedData);
-  #endif
-
-        // Parse the recieved data
-        scalesParse(receivedData);
-      }
+      bufferIndex++;
     }
-}
+    else
+    {
+#ifdef ENABLE_DEBUG
+      DEBUG_PORT.println("Scales Receive Buffer Overflow! - Size: " + String(bufferIndex + 1));
+#endif
+      bufferIndex = 0; // Start overwriting the buffer
+    }
 
+    // Watch for the scales response termination
+    if (strstr(receivedData, scalesProfile[activeScalesProfile].responseTermination) != NULL)
+    {
+      bufferIndex = 0; // Reset the reading procedure
+#ifdef DEBUG_SCALES_RECEIVE
+      Serial.println("Termination Found: " + String(scalesProfile[activeScalesProfile].responseTermination));
+#endif
+#ifdef DEBUG_SCALES
+      Serial.println("Data Received:");
+      Serial.println(receivedData);
+#endif
+
+      // Parse the recieved data
+      scalesParse(receivedData);
+    }
+  }
+}
+/*
 // Verifies and parses the data received from the scales
 void scalesParse(char *data)
 {
