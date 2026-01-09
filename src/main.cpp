@@ -276,7 +276,7 @@ const uint8_t descriptor[] = {
 // Scales RS232 Profile
 struct scalesProfile_t
 {
-  const char name[11];
+  const char name[20];
   const CRGB LEDColor;
   const int baudRate;
   const char requestStr[3];
@@ -343,9 +343,9 @@ int statusLEDHue = 0; // Tracks hue for animations
 // Scales Configuration
 #define SCALES_PORT Serial1         // The serial port used by the RS232 hardware
 #define SCALES_MAX_RESPONSE_SIZE 75 // The most characters a scale will send over serial
-scalesProfile_t scalesProfile[1] = {
+scalesProfile_t scalesProfile[2] = {
     {
-        "Avery",                                                                       // Avery ZK830 Indicator
+        "Avery ZK830",                                                                 // Avery ZK830 Indicator
         CRGB::DarkGreen,                                                               // LED Color
         9600,                                                                          // Baud Rate
         "p",                                                                           // Request String
@@ -357,6 +357,21 @@ scalesProfile_t scalesProfile[1] = {
         "GROSS WT:     0.00 lb\r\nCOUNT:            0\r\nPIECE WT: -------- lb\r\n\n", // Response Format in Pounds
         "GROSS WT:     0.00 kg\r\nCOUNT:            0\r\nPIECE WT: -------- kg\r\n\n", // Response Format in Kilograms
         "00000000001111111100000000000011111111111100000000000011111111000000",        // Response mask, zeros indicate data that never changes, and ones indicate variables
+        -50.00,                                                                        // Minimum Weight
+        100.00,                                                                        // Maximum Weight
+    } {
+        "Mettler Generic",                                                             // Common Mettler Scales
+        CRGB::DarkBlue,                                                                // LED Color
+        115200,                                                                        // Baud Rate
+        "S\r\n",                                                                       // Request String
+        1000,                                                                          // Request Interval
+        3000,                                                                          // Request Timeout
+        "\r\n",                                                                        // Response Termination
+        1,                                                                             // Number of Values in Response
+        0,                                                                             // Index of Weight Value in Response
+        "S S      0.00 lb\r\n",                                                        // Response Format in Pounds
+        "S S      0.00 kg\r\n",                                                        // Response Format in Kilograms
+        "000011111111100000",                                                          // Response mask, zeros indicate data that never changes, and ones indicate variables
         -50.00,                                                                        // Minimum Weight
         100.00,                                                                        // Maximum Weight
     }};
