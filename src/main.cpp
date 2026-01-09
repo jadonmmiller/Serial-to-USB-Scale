@@ -281,6 +281,7 @@ struct scalesProfile_t
   const int baudRate;
   const char requestStr[3];
   const int requestInterval;
+  const int requestTimeout;
   const char responseTermination[3];
   const byte numResponseValues;
   const byte responseWeightValueIndex;
@@ -329,7 +330,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 // #define DEBUG_HID
 #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
-#define DEBUG_SCALES_RECEIVE
+// #define DEBUG_SCALES_RECEIVE
 // #define DEBUG_SCALES_VERIFY
 // #define DEBUG_SCALES_PARSE
 #endif
@@ -349,6 +350,7 @@ scalesProfile_t scalesProfile[1] = {
         9600,                                                                          // Baud Rate
         "p",                                                                           // Request String
         1500,                                                                          // Request Interval
+        5000,                                                                          // Request Timeout
         "\n\n",                                                                        // Response Termination
         3,                                                                             // Number of Values in Response
         0,                                                                             // Index of Weight Value in Response
@@ -368,6 +370,8 @@ int HIDWeight = 0;
 
 // Connected to a scales
 bool scalesConnected = false;
+// Last scales response time
+unsigned long lastScalesResponseTime = 0;
 
 // Scales Profile in Use
 byte activeScalesProfile = 0;
@@ -383,6 +387,7 @@ void scalesInit();
 void scalesPoll();
 void scalesReceive();
 void scalesParse(char *data);
+void flagGoodReceive();
 void scalesCalcWeight(float raw, unit_t unit);
 bool verifyResponse(char *data, char *format, char *mask);
 bool isNumeric(char c);
@@ -584,6 +589,12 @@ void scalesPoll()
 // Watches the serial line and receives data
 void scalesReceive()
 {
+  // Watch for a timeout
+  if (millis() - lastScalesResponseTime >= scalesProfile[activeScalesProfile].requestTimeout)
+  {
+    scalesConnected = false;
+  }
+
   static char receivedData[SCALES_MAX_RESPONSE_SIZE + 1] = "\0"; // Add 1 for null termination
 
   static byte bufferIndex = 0;
@@ -642,7 +653,7 @@ void scalesParse(char *data)
   {
     // We've received a good response in lb format
     responseUnit = lb;
-    scalesConnected = true;
+    flagGoodReceive();
 
 #ifdef DEBUG_SCALES
     Serial.println("Good Response Received - Pounds");
@@ -652,7 +663,7 @@ void scalesParse(char *data)
   {
     // Good response in kg format
     responseUnit = kg;
-    scalesConnected = true;
+    flagGoodReceive();
 
 #ifdef DEBUG_SCALES
     Serial.println("Good Response Received - Kilograms");
@@ -813,6 +824,13 @@ bool verifyResponse(char *data, char *format, char *mask)
   Serial.println("Verification Succeeded");
 #endif
   return true;
+}
+
+// Flags that a good response was received from the scales
+void flagGoodReceive()
+{
+  scalesConnected = true;
+  lastScalesResponseTime = millis();
 }
 
 // Returns true if the character is a number or decimal point.
