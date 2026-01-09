@@ -9,6 +9,7 @@ License: The Unlicense
 
 #include <Arduino.h>
 #include "Adafruit_TinyUSB.h"
+#include <FastLED.h>
 
 // ---------- Constants ----------
 // HID Spec Constants
@@ -167,6 +168,7 @@ const uint8_t descriptor[] = {
 struct scalesProfile_t
 {
   const char name[11];
+  const CRGB LEDColor;
   const int baudRate;
   const char requestStr[3];
   const int requestInterval;
@@ -204,11 +206,10 @@ enum unit_t
 // Status and Debug
 #define ENABLE_STATUS_LED
 #ifdef ENABLE_STATUS_LED
-#include <FastLED.h>
 CRGB statusLED[1];    // FastLED Object
 int statusLEDHue = 0; // Tracks hue for animations
 #define STATUS_LED_PIN 16
-#define STATUS_LED_BRIGHTNESS 150
+#define STATUS_LED_BRIGHTNESS 20
 #define STATUS_LED_FAST_BLINK_MS 150
 #endif
 
@@ -235,6 +236,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 scalesProfile_t scalesProfile[1] = {
     {
         "Avery",                                                                       // Avery ZK830 Indicator
+        CRGB::DarkGreen,                                                               // LED Color
         9600,                                                                          // Baud Rate
         "p",                                                                           // Request String
         1500,                                                                          // Request Interval
@@ -243,7 +245,7 @@ scalesProfile_t scalesProfile[1] = {
         0,                                                                             // Index of Weight Value in Response
         "GROSS WT:     0.00 lb\r\nCOUNT:            0\r\nPIECE WT: -------- lb\r\n\n", // Response Format in Pounds
         "GROSS WT:     0.00 kg\r\nCOUNT:            0\r\nPIECE WT: -------- kg\r\n\n", // Response Format in Kilograms
-        // Response mask, zeros indicate data that nevver changes, and ones indicate variables
+        // Response mask, zeros indicate data that never changes, and ones indicate variables
         "00000000001111111100000000000011111111111100000000000011111111000000",
         100.00, // Maximum Weight
         -50.00  // Minimum Weight
@@ -352,6 +354,11 @@ void statusLEDUpdate()
       FastLED.show();
     }
   }
+  else if (scalesConnected)
+  {
+    statusLED[0] = scalesProfile[activeScalesProfile].LEDColor;
+    FastLED.show();
+  }
 }
 #endif
 
@@ -378,7 +385,7 @@ void HIDInit()
   usb_hid.setBootProtocol(HID_ITF_PROTOCOL_NONE);
   usb_hid.setPollInterval(10);
   usb_hid.setReportDescriptor(descriptor, sizeof(descriptor));
-  usb_hid.setStringDescriptor("Scales Adapter");
+  usb_hid.setStringDescriptor("MIS Scales Adapter");
 
   // Start the HID and report failure
   if (!usb_hid.begin())
@@ -507,21 +514,24 @@ void scalesReceive()
     }
   }
 }
-/*
+
 // Verifies and parses the data received from the scales
 void scalesParse(char *data)
 {
   // Compare the response to known formats, and identify the unit
   unit_t responseUnit;
-  char formatLB[SCALES_MAX_RESPONSE_SIZE + 1] =
-  scalesProfile[0].responseFormatLbs;
-  char formatKG[SCALES_MAX_RESPONSE_SIZE + 1] = scalesProfile[0].responseFormatKgs[0];
-  char mask[SCALES_MAX_RESPONSE_SIZE + 1] = scalesProfile[0].responseValueMask[0];
+  char formatLB[SCALES_MAX_RESPONSE_SIZE + 1];
+  char formatKG[SCALES_MAX_RESPONSE_SIZE + 1];
+  char mask[SCALES_MAX_RESPONSE_SIZE + 1];
+  strcpy(formatLB, scalesProfile[activeScalesProfile].responseFormatLbs);
+  strcpy(formatKG, scalesProfile[activeScalesProfile].responseFormatKgs);
+  strcpy(mask, scalesProfile[activeScalesProfile].responseValueMask);
 
   if (verifyResponse(data, formatLB, mask))
   {
     // We've received a good response in lb format
     responseUnit = lb;
+    scalesConnected = true;
 
 #ifdef DEBUG_SCALES
     Serial.println("Good Response Received - Pounds");
@@ -531,6 +541,7 @@ void scalesParse(char *data)
   {
     // Good response in kg format
     responseUnit = kg;
+    scalesConnected = true;
 
 #ifdef DEBUG_SCALES
     Serial.println("Good Response Received - Kilograms");
@@ -539,6 +550,8 @@ void scalesParse(char *data)
   else
   {
     // Bad Response
+    scalesConnected = false;
+
 #ifdef ENABLE_DEBUG
     Serial.println("Scales response isn't in a known format!");
     return;
@@ -546,7 +559,7 @@ void scalesParse(char *data)
   }
 
   // Start parsing the data
-  static float parsedNumbers[scalesProfile[0].numResponseValues + 1] = {0};
+  float parsedNumbers[scalesProfile[0].numResponseValues + 1] = {0};
 
 #ifdef DEBUG_SCALES_PARSE
   Serial.println("Parsing Data");
@@ -732,7 +745,7 @@ bool isNumeric(char c)
 
 
 
-
+/*
 // the setup function runs once when you press reset or power the board
 void setup()
 {
