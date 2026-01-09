@@ -276,20 +276,20 @@ const uint8_t descriptor[] = {
 // Scales RS232 Profile
 struct scalesProfile_t
 {
-  const char name[20];
-  const CRGB LEDColor;
-  const int baudRate;
-  const char requestStr[3];
-  const int requestInterval;
-  const int requestTimeout;
-  const char responseTermination[3];
-  const byte numResponseValues;
-  const byte responseWeightValueIndex;
-  const char responseFormatLbs[200];
-  const char responseFormatKgs[200];
-  const char responseValueMask[200];
-  const float minWeight; // lbs
-  const float maxWeight;
+  char name[20];
+  CRGB LEDColor;
+  int baudRate;
+  char requestStr[5];
+  int requestInterval;
+  int requestTimeout;
+  char responseTermination[3];
+  byte numResponseValues;
+  byte responseWeightValueIndex;
+  char responseFormatLbs[200];
+  char responseFormatKgs[200];
+  char responseValueMask[200];
+  float minWeight; // lbs
+  float maxWeight;
 };
 
 // HID Report
@@ -330,6 +330,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 // #define DEBUG_HID
 #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
+#define DEBUG_SCALES_SORT
 // #define DEBUG_SCALES_RECEIVE
 // #define DEBUG_SCALES_VERIFY
 // #define DEBUG_SCALES_PARSE
@@ -343,7 +344,8 @@ int statusLEDHue = 0; // Tracks hue for animations
 // Scales Configuration
 #define SCALES_PORT Serial1         // The serial port used by the RS232 hardware
 #define SCALES_MAX_RESPONSE_SIZE 75 // The most characters a scale will send over serial
-scalesProfile_t scalesProfile[2] = {
+#define SCALES_NUM_PROFILES 3       // The number of scales profiles defined
+scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
     {
         "Avery ZK830",                                                                 // Avery ZK830 Indicator
         CRGB::DarkGreen,                                                               // LED Color
@@ -359,21 +361,38 @@ scalesProfile_t scalesProfile[2] = {
         "00000000001111111100000000000011111111111100000000000011111111000000",        // Response mask, zeros indicate data that never changes, and ones indicate variables
         -50.00,                                                                        // Minimum Weight
         100.00,                                                                        // Maximum Weight
-    } {
-        "Mettler Generic",                                                             // Common Mettler Scales
-        CRGB::DarkBlue,                                                                // LED Color
-        115200,                                                                        // Baud Rate
-        "S\r\n",                                                                       // Request String
-        1000,                                                                          // Request Interval
-        3000,                                                                          // Request Timeout
-        "\r\n",                                                                        // Response Termination
-        1,                                                                             // Number of Values in Response
-        0,                                                                             // Index of Weight Value in Response
-        "S S      0.00 lb\r\n",                                                        // Response Format in Pounds
-        "S S      0.00 kg\r\n",                                                        // Response Format in Kilograms
-        "000011111111100000",                                                          // Response mask, zeros indicate data that never changes, and ones indicate variables
-        -50.00,                                                                        // Minimum Weight
-        100.00,                                                                        // Maximum Weight
+    },
+    {
+        "Mettler Generic",      // Common Mettler Scales
+        CRGB::DarkBlue,         // LED Color
+        115200,                 // Baud Rate
+        "S\r\n",                // Request String
+        1000,                   // Request Interval
+        3000,                   // Request Timeout
+        "\r\n",                 // Response Termination
+        1,                      // Number of Values in Response
+        0,                      // Index of Weight Value in Response
+        "S S      0.00 lb\r\n", // Response Format in Pounds
+        "S S      0.00 kg\r\n", // Response Format in Kilograms
+        "000011111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
+        -50.00,                 // Minimum Weight
+        100.00,                 // Maximum Weight
+    },
+    {
+        "Adam CPWplus",        // Adam CPWplus Scales
+        CRGB::DarkRed,        // LED Color
+        96000,                 // Baud Rate
+        "S\r\n",               // Request String
+        1000,                  // Request Interval
+        3000,                  // Request Timeout
+        "\r\n",                // Response Termination
+        1,                     // Number of Values in Response
+        0,                     // Index of Weight Value in Response
+        "S S      0.00 lb\r\n", // Response Format in Pounds
+        "S S      0.00 kg\r\n", // Response Format in Kilograms
+        "000011111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
+        -50.00,                 // Minimum Weight
+        100.00,                 // Maximum Weight
     }};
 
 // ---------- Runtime Variables ----------
@@ -399,6 +418,7 @@ void debugInit();
 void HIDInit();
 void HIDUpdate();
 void scalesInit();
+void scalesSearch();
 void scalesPoll();
 void scalesReceive();
 void scalesParse(char *data);
@@ -437,6 +457,12 @@ void loop()
 
   // Send an HID report
   HIDUpdate();
+
+  // If the scales are not connected, search for them
+  if (!scalesConnected)
+  {
+    scalesSearch();
+  }
 
   // Check if it's time to poll the scales
   scalesPoll();
@@ -584,6 +610,55 @@ void scalesInit()
 #ifdef ENABLE_DEBUG
   DEBUG_PORT.println("RS232 Started");
 #endif
+}
+
+// Searches for the scales by cycling through profiles and polling each one
+void scalesSearch()
+{
+  // Sort the scales profiles by baud rate
+  static scalesProfile_t sortedScaleProfiles[SCALES_NUM_PROFILES] = {};
+  if (sortedScaleProfiles[0].baudRate == 0) // The array is uninitialized
+  {
+#ifdef DEBUG_SCALES_SORT
+    DEBUG_PORT.println("Sorting Scales Profiles by Baud Rate");
+#endif
+
+    // Create a sorted list of scales profiles based on baud rate
+    for (byte i = 0; i < SCALES_NUM_PROFILES; i++)
+    {
+      sortedScaleProfiles[i] = scalesProfile[i];
+    }
+    // Simple Bubble Sort
+    for (byte i = 0; i < SCALES_NUM_PROFILES - 1; i++)
+    {
+      for (byte j = 0; j < SCALES_NUM_PROFILES - i - 1; j++)
+      {
+        if (sortedScaleProfiles[j].baudRate < sortedScaleProfiles[j + 1].baudRate)
+        {
+#ifdef DEBUG_SCALES_SORT
+          DEBUG_PORT.println("Baud Rate " + String(sortedScaleProfiles[j].baudRate) + "(" + String(sortedScaleProfiles[j].name) + ") < " + String(sortedScaleProfiles[j + 1].baudRate) + "(" + String(sortedScaleProfiles[j + 1].name) + "), swapping");
+#endif
+          scalesProfile_t temp = sortedScaleProfiles[j];
+          sortedScaleProfiles[j] = sortedScaleProfiles[j + 1];
+          sortedScaleProfiles[j + 1] = temp;
+        }
+        else
+        {
+#ifdef DEBUG_SCALES_SORT
+          DEBUG_PORT.println("Baud Rate " + String(sortedScaleProfiles[j].baudRate) + "(" + String(sortedScaleProfiles[j].name) + ") > " + String(sortedScaleProfiles[j + 1].baudRate) + "(" + String(sortedScaleProfiles[j + 1].name) + "), ignoring");
+#endif
+        }
+      }
+    }
+
+#ifdef DEBUG_SCALES_SORT
+    DEBUG_PORT.println("Scales Profiles Sorted:");
+    for (byte i = 0; i < SCALES_NUM_PROFILES; i++)
+    {
+      DEBUG_PORT.println("  " + String(sortedScaleProfiles[i].name) + " - " + String(sortedScaleProfiles[i].baudRate) + " Baud");
+    }
+#endif
+  }
 }
 
 // Polls the scale after a certain amount of time
