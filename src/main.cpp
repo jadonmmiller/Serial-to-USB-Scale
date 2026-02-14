@@ -330,7 +330,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 // #define DEBUG_HID
 #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
-// #define DEBUG_SCALES_SORT
+ #define DEBUG_SCALES_SORT
 #define DEBUG_SCALES_SEARCH
 // #define DEBUG_SCALES_RECEIVE
 // #define DEBUG_SCALES_VERIFY
@@ -364,31 +364,31 @@ scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
         100.00,                                                                        // Maximum Weight
     },
     {
-        "Mettler Generic",      // Common Mettler Scales
-        CRGB::DarkBlue,         // LED Color
-        115200,                 // Baud Rate
-        "S\r\n",                // Request String
+        "Mettler Generic",       // Common Mettler Scales
+        CRGB::DarkBlue,          // LED Color
+        9600,                    // Baud Rate
+        "M\r\n",                 // Request String
+        1000,                    // Request Interval
+        3000,                    // Request Timeout
+        "\r\n",                  // Response Termination
+        1,                       // Number of Values in Response
+        0,                       // Index of Weight Value in Response
+        "S S       0.00 lb\r\n", // Response Format in Pounds
+        "S S       0.00 kg\r\n", // Response Format in Kilograms
+        "0000111111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
+        -50.00,                  // Minimum Weight
+        100.00,                  // Maximum Weight
+    },
+    {
+        "Adam CPWplus",         // Adam CPWplus Scales
+        CRGB::DarkRed,          // LED Color
+        9600,                   // Baud Rate
+        "A\r\n",                // Request String
         1000,                   // Request Interval
         3000,                   // Request Timeout
         "\r\n",                 // Response Termination
         1,                      // Number of Values in Response
         0,                      // Index of Weight Value in Response
-        "S S      0.00 lb\r\n", // Response Format in Pounds
-        "S S      0.00 kg\r\n", // Response Format in Kilograms
-        "000011111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
-        -50.00,                 // Minimum Weight
-        100.00,                 // Maximum Weight
-    },
-    {
-        "Adam CPWplus",        // Adam CPWplus Scales
-        CRGB::DarkRed,        // LED Color
-        96000,                 // Baud Rate
-        "S\r\n",               // Request String
-        1000,                  // Request Interval
-        3000,                  // Request Timeout
-        "\r\n",                // Response Termination
-        1,                     // Number of Values in Response
-        0,                     // Index of Weight Value in Response
         "S S      0.00 lb\r\n", // Response Format in Pounds
         "S S      0.00 kg\r\n", // Response Format in Kilograms
         "000011111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
@@ -675,9 +675,6 @@ void scalesSearch()
     SCALES_PORT.end();
     SCALES_PORT.begin(sortedScaleProfiles[activeScalesProfile].baudRate);
   }
-
-
-
 }
 
 // Polls the scale after a certain amount of time
