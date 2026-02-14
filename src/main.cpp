@@ -330,7 +330,8 @@ int statusLEDHue = 0; // Tracks hue for animations
 // #define DEBUG_HID
 #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
-#define DEBUG_SCALES_SORT
+// #define DEBUG_SCALES_SORT
+#define DEBUG_SCALES_SEARCH
 // #define DEBUG_SCALES_RECEIVE
 // #define DEBUG_SCALES_VERIFY
 // #define DEBUG_SCALES_PARSE
@@ -612,7 +613,7 @@ void scalesInit()
 #endif
 }
 
-// Searches for the scales by cycling through profiles and polling each one
+// Searches for the scales by cycling through profiles from fastest baud to slowest and polling each one
 void scalesSearch()
 {
   // Sort the scales profiles by baud rate
@@ -659,6 +660,24 @@ void scalesSearch()
     }
 #endif
   }
+
+  // Check for a timeout on the current profile
+  if (millis() - lastScalesResponseTime >= scalesProfile[activeScalesProfile].requestTimeout)
+  {
+    // Move to the next profile
+    activeScalesProfile++;
+    if (activeScalesProfile >= SCALES_NUM_PROFILES)
+    {
+      activeScalesProfile = 0;
+    }
+
+    // Update the serial port to the new profile
+    SCALES_PORT.end();
+    SCALES_PORT.begin(sortedScaleProfiles[activeScalesProfile].baudRate);
+  }
+
+
+
 }
 
 // Polls the scale after a certain amount of time
@@ -714,11 +733,11 @@ void scalesReceive()
     {
       bufferIndex = 0; // Reset the reading procedure
 #ifdef DEBUG_SCALES_RECEIVE
-      Serial.println("Termination Found: " + String(scalesProfile[activeScalesProfile].responseTermination));
+      DEBUG_PORT.println("Termination Found: " + String(scalesProfile[activeScalesProfile].responseTermination));
 #endif
 #ifdef DEBUG_SCALES
-      Serial.println("Data Received:");
-      Serial.println(receivedData);
+      DEBUG_PORT.println("Data Received:");
+      DEBUG_PORT.println(receivedData);
 #endif
 
       // Parse the recieved data
@@ -746,7 +765,7 @@ void scalesParse(char *data)
     flagGoodReceive();
 
 #ifdef DEBUG_SCALES
-    Serial.println("Good Response Received - Pounds");
+    DEBUG_PORT.println("Good Response Received - Pounds");
 #endif
   }
   else if (verifyResponse(data, formatKG, mask))
@@ -756,7 +775,7 @@ void scalesParse(char *data)
     flagGoodReceive();
 
 #ifdef DEBUG_SCALES
-    Serial.println("Good Response Received - Kilograms");
+    DEBUG_PORT.println("Good Response Received - Kilograms");
 #endif
   }
   else
@@ -765,7 +784,7 @@ void scalesParse(char *data)
     scalesConnected = false;
 
 #ifdef ENABLE_DEBUG
-    Serial.println("Scales response isn't in a known format!");
+    DEBUG_PORT.println("Scales response isn't in a known format!");
     return;
 #endif
   }
@@ -774,7 +793,7 @@ void scalesParse(char *data)
   float parsedNumbers[scalesProfile[activeScalesProfile].numResponseValues + 1] = {0};
 
 #ifdef DEBUG_SCALES_PARSE
-  Serial.println("Parsing Data");
+  DEBUG_PORT.println("Parsing Data");
 #endif
 
   byte numberIndex = 0; // Counts the different values we pull from the data
@@ -784,24 +803,24 @@ void scalesParse(char *data)
   {
 
 #ifdef DEBUG_SCALES_PARSE
-    Serial.println("Parsing: " + String(char(data[i])));
+    DEBUG_PORT.println("Parsing: " + String(char(data[i])));
 #endif
 
     if (isNumeric(data[i])) // Starting a number
     {
 #ifdef DEBUG_SCALES_PARSE
-      Serial.println("Starting Number");
+      DEBUG_PORT.println("Starting Number");
 #endif
       parsedNumbers[numberIndex] = strtof(data + i, NULL);
 #ifdef DEBUG_SCALES_PARSE
-      Serial.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
+      DEBUG_PORT.println("Number Parsed: " + String(parsedNumbers[numberIndex]));
 #endif
       // Loop through the rest of the number's characters
       while (isNumeric(data[i + 1]))
       {
         i++;
 #ifdef DEBUG_SCALES_PARSE
-        Serial.println("Ignoring: " + String(char(data[i])));
+        DEBUG_PORT.println("Ignoring: " + String(char(data[i])));
 #endif
       }
 
@@ -813,7 +832,7 @@ void scalesParse(char *data)
       else // We're gonna overflow the array
       {
 #ifdef ENABLE_DEBUG
-        Serial.println("Too Many Scales Values Found! - " + String(numberIndex + 1)); // Add 1 to account for zero-based array
+        DEBUG_PORT.println("Too Many Scales Values Found! - " + String(numberIndex + 1)); // Add 1 to account for zero-based array
 #endif
         break;
       }
@@ -821,7 +840,7 @@ void scalesParse(char *data)
   } // Finished looping through data
 
 #ifdef DEBUG_SCALES
-  Serial.println("Weight Parsed: " + String(parsedNumbers[scalesProfile[activeScalesProfile].responseWeightValueIndex]));
+  DEBUG_PORT.println("Weight Parsed: " + String(parsedNumbers[scalesProfile[activeScalesProfile].responseWeightValueIndex]));
 #endif
 
   // Convert and save the weight
@@ -842,7 +861,7 @@ void scalesCalcWeight(float raw, unit_t unit)
     weightLB = raw * KG_TO_LB_CONVERSION_FACTOR; // Convert to lbs
 
 #ifdef DEBUG_SCALES
-    Serial.println("Weight Converted to Lbs: " + String(weightLB));
+    DEBUG_PORT.println("Weight Converted to Lbs: " + String(weightLB));
 #endif
   }
 
@@ -850,7 +869,7 @@ void scalesCalcWeight(float raw, unit_t unit)
   if (weightLB >= scalesProfile[activeScalesProfile].minWeight && weightLB <= scalesProfile[activeScalesProfile].maxWeight)
   {
 #ifdef DEBUG_SCALES
-    Serial.println("Weight Valid");
+    DEBUG_PORT.println("Weight Valid");
 #endif
 
     // Calculate Weight
@@ -859,13 +878,13 @@ void scalesCalcWeight(float raw, unit_t unit)
     HIDWeight = round(convertedWeight);                         // Now our math is done, so we can convert it to an integer
 
 #ifdef DEBUG_SCALES
-    Serial.println("Converted Weight: " + String(HIDWeight));
+    DEBUG_PORT.println("Converted Weight: " + String(HIDWeight));
 #endif
   }
   else
   {
 #ifdef DEBUG_SCALES
-    Serial.println("Weight Invalid!");
+    DEBUG_PORT.println("Weight Invalid!");
 #endif
   }
 }
@@ -874,7 +893,7 @@ void scalesCalcWeight(float raw, unit_t unit)
 bool verifyResponse(char *data, char *format, char *mask)
 {
 #ifdef DEBUG_SCALES_VERIFY
-  Serial.println("Verifying Response");
+  DEBUG_PORT.println("Verifying Response");
 #endif
 
   for (int i = 0; data[i] != '\0' || i >= SCALES_MAX_RESPONSE_SIZE - 1; i++)
@@ -884,34 +903,34 @@ bool verifyResponse(char *data, char *format, char *mask)
     if (mask[i] == '0')
     {
 #ifdef DEBUG_SCALES_VERIFY
-      Serial.print(String(char(data[i])));
+      DEBUG_PORT.print(String(char(data[i])));
 #endif
 
       if (data[i] != format[i]) // There's a discrepency
       {
 #ifdef DEBUG_SCALES_VERIFY
-        Serial.print(" != ");
-        Serial.println(String(char(format[i])));
-        Serial.println("Verification Failed!");
+        DEBUG_PORT.print(" != ");
+        DEBUG_PORT.println(String(char(format[i])));
+        DEBUG_PORT.println("Verification Failed!");
 #endif
         return false;
       }
       else
       {
 #ifdef DEBUG_SCALES_VERIFY
-        Serial.print(" = ");
+        DEBUG_PORT.print(" = ");
 #endif
       }
 
 #ifdef DEBUG_SCALES_VERIFY
-      Serial.println(String(char(format[i])));
+      DEBUG_PORT.println(String(char(format[i])));
 #endif
     }
   }
 
 // If we reached this point, there are no discrepencies
 #ifdef DEBUG_SCALES_VERIFY
-  Serial.println("Verification Succeeded");
+  DEBUG_PORT.println("Verification Succeeded");
 #endif
   return true;
 }
