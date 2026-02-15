@@ -323,7 +323,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 #define STATUS_LED_FAST_BLINK_MS 150
 #endif
 
-#define ENABLE_DEBUG
+// #define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG_PORT Serial
 #define DEBUG_BAUD 115200
