@@ -525,6 +525,7 @@ void statusLEDUpdate()
 void debugInit()
 {
   DEBUG_PORT.begin(DEBUG_BAUD);
+  delay(2000); // Wait for the serial connection to be established
   DEBUG_PORT.println("Miller Industrial Services");
   DEBUG_PORT.println("RS-232 to USB HID Scales Adapter");
   DEBUG_PORT.println("Hardware Version: " + String(HARDWARE_VERSION) + ", Software Version: " + String(SOFTWARE_VERSION));
