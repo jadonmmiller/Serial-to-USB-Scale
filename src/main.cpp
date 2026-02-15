@@ -323,12 +323,12 @@ int statusLEDHue = 0; // Tracks hue for animations
 #define STATUS_LED_FAST_BLINK_MS 150
 #endif
 
-// #define ENABLE_DEBUG
+#define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG_PORT Serial
 #define DEBUG_BAUD 115200
 // #define DEBUG_HID
-// #define DEBUG_SCALES
+#define DEBUG_SCALES
 #ifdef DEBUG_SCALES
 #define DEBUG_SCALES_SORT
 #define DEBUG_SCALES_SEARCH
@@ -345,7 +345,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 // Scales Configuration
 #define SCALES_PORT Serial1         // The serial port used by the RS232 hardware
 #define SCALES_MAX_RESPONSE_SIZE 75 // The most characters a scale will send over serial
-#define SCALES_NUM_PROFILES 2       // The number of scales profiles defined
+#define SCALES_NUM_PROFILES 1       // The number of scales profiles defined
 scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
     {
         "Avery ZK830",                                                                 // Avery ZK830 Indicator
@@ -362,23 +362,8 @@ scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
         "00000000001111111100000000000011111111111100000000000011111111000000",        // Response mask, zeros indicate data that never changes, and ones indicate variables
         -50.00,                                                                        // Minimum Weight
         100.00,                                                                        // Maximum Weight
-    },
-    {
-        "Mettler Generic",       // Common Mettler Scales
-        CRGB::DarkBlue,          // LED Color
-        115200,                  // Baud Rate
-        "S\r\n",                 // Request String
-        1000,                    // Request Interval
-        3000,                    // Request Timeout
-        "\r\n",                  // Response Termination
-        1,                       // Number of Values in Response
-        0,                       // Index of Weight Value in Response
-        "S S       0.00 lb\r\n", // Response Format in Pounds
-        "S S       0.00 kg\r\n", // Response Format in Kilograms
-        "0000111111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
-        -50.00,                  // Minimum Weight
-        100.00,                  // Maximum Weight
-    }};
+    } // Add more scales profiles here, just make sure to update SCALES_NUM_PROFILES
+};
 
 // ---------- Runtime Variables ----------
 // HID Instance
