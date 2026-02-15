@@ -323,7 +323,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 #define STATUS_LED_FAST_BLINK_MS 150
 #endif
 
-#define ENABLE_DEBUG
+// #define ENABLE_DEBUG
 #ifdef ENABLE_DEBUG
 #define DEBUG_PORT Serial
 #define DEBUG_BAUD 115200
@@ -421,13 +421,13 @@ void setup()
   statusLEDInit();
 #endif
 
+  // Start the HID program
+  HIDInit();
+
 // Start the debugger
 #ifdef ENABLE_DEBUG
   debugInit();
 #endif
-
-  // Start the HID program
-  HIDInit();
 
   // Start the scales communications
   scalesInit();
@@ -520,38 +520,14 @@ void debugInit()
 // Initializes the HID Components
 void HIDInit()
 {
-#ifdef ENABLE_DEBUG
-  DEBUG_PORT.print("Starting HID... ");
-#endif
-
   // Configure HID
   usb_hid.setBootProtocol(HID_ITF_PROTOCOL_NONE);
   usb_hid.setPollInterval(10);
   usb_hid.setReportDescriptor(descriptor, sizeof(descriptor));
-  usb_hid.setStringDescriptor("MIS Scales Adapter");
+  usb_hid.setStringDescriptor("Serial Scales Adapter");
 
-  // Start the HID and report failure
-  if (!usb_hid.begin())
-  {
-#ifdef ENABLE_DEBUG
-    DEBUG_PORT.println("HID Failed to Start");
-#endif
-  }
-
-  // Wait for HID to connect then check the mounting status
-  delay(500);
-  if (TinyUSBDevice.mounted())
-  {
-#ifdef ENABLE_DEBUG
-    DEBUG_PORT.println("HID Connected");
-#endif
-  }
-  else
-  {
-#ifdef ENABLE_DEBUG
-    DEBUG_PORT.println("HID Failed to Mount");
-#endif
-  }
+  // Start the HID
+  usb_hid.begin();
 }
 
 // Sends a report to the USB Host
@@ -560,9 +536,6 @@ void HIDUpdate()
   // If HID is busy (e.g. sending previous report, skip the update)
   if (!usb_hid.ready())
   {
-#ifdef DEBUG_HID
-    DEBUG_PORT.println("HID Report Failed to Send - HID Busy");
-#endif
     return;
   }
 
@@ -586,7 +559,7 @@ void HIDUpdate()
 // Starts the serial link with the scales
 void scalesInit()
 {
-#ifdef DEBUG_SCALES
+#ifdef ENABLE_DEBUG
   DEBUG_PORT.print("Starting RS232... ");
 #endif
 
@@ -672,7 +645,6 @@ void scalesSearch()
     SCALES_PORT.end();
     SCALES_PORT.begin(scalesProfile[activeScalesProfile].baudRate);
     delay(1000); // Wait for the serial port to initialize
-
   }
 }
 
@@ -856,8 +828,8 @@ void scalesCalcWeight(float raw, unit_t unit)
   {
     weightLB = raw * KG_TO_LB_CONVERSION_FACTOR; // Convert to lbs
 
-#ifdef DEBUG_SCALES
-    DEBUG_PORT.println("Weight Converted to Lbs: " + String(weightLB));
+#ifdef ENABLE_DEBUG
+    DEBUG_PORT.println("Weight: " + String(weightLB) + " lb");
 #endif
   }
 
@@ -961,72 +933,3 @@ bool isNumeric(char c)
     break;
   }
 }
-
-/*
-// the setup function runs once when you press reset or power the board
-void setup()
-{
-  // Manual begin() is required on core without built-in support e.g. mbed rp2040
-  if (!TinyUSBDevice.isInitialized())
-  {
-    TinyUSBDevice.begin(0);
-  }
-
-  // Setup HID
-  usb_hid.setBootProtocol(HID_ITF_PROTOCOL_NONE);
-  usb_hid.setPollInterval(2);
-  usb_hid.setReportDescriptor(descriptor, sizeof(descriptor));
-  usb_hid.setStringDescriptor("Scales Adapter");
-
-  usb_hid.begin();
-
-  // If already enumerated, additional class driverr begin() e.g msc, hid, midi won't take effect until re-enumeration
-  if (TinyUSBDevice.mounted())
-  {
-    TinyUSBDevice.detach();
-    delay(10);
-    TinyUSBDevice.attach();
-  }
-
-  // led pin
-  pinMode(29, OUTPUT);
-  digitalWrite(29, HIGH);
-}
-void process_scales()
-{
-  // skip if hid is not ready e.g still transferring previous report
-  if (!usb_hid.ready())
-    return;
-
-  digitalWrite(29, LOW);
-
-  // Create a data report
-  dataReport.unit = USAGE_WEIGHT_UNIT_POUND;
-  dataReport.scaling = -HID_PRECISION_DIGITS; // -2 makes the scale expect 1.23 to be encoded as 123
-  dataReport.weight = 125;
-
-  usb_hid.sendReport(SCALE_DATA_REPORT_ID, (uint8_t *)&dataReport, sizeof(dataReport));
-}
-
-
-void loop()
-{
-#ifdef TINYUSB_NEED_POLLING_TASK
-  // Manual call tud_task since it isn't called by Core's background
-  TinyUSBDevice.task();
-#endif
-
-  // not enumerated()/mounted() yet: nothing to do
-  if (!TinyUSBDevice.mounted())
-  {
-    return;
-  }
-
-  // poll gpio once each 2 ms
-  static uint32_t ms = 0;
-  if (millis() - ms > 2)
-  {
-    ms = millis();
-    process_scales();
-  }
-}*/
