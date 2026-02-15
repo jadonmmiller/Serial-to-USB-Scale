@@ -328,10 +328,10 @@ int statusLEDHue = 0; // Tracks hue for animations
 #define DEBUG_PORT Serial
 #define DEBUG_BAUD 115200
 // #define DEBUG_HID
-#define DEBUG_SCALES
+// #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
- #define DEBUG_SCALES_SORT
-#define DEBUG_SCALES_SEARCH
+// #define DEBUG_SCALES_SORT
+// #define DEBUG_SCALES_SEARCH
 // #define DEBUG_SCALES_RECEIVE
 // #define DEBUG_SCALES_VERIFY
 // #define DEBUG_SCALES_PARSE
@@ -345,7 +345,7 @@ int statusLEDHue = 0; // Tracks hue for animations
 // Scales Configuration
 #define SCALES_PORT Serial1         // The serial port used by the RS232 hardware
 #define SCALES_MAX_RESPONSE_SIZE 75 // The most characters a scale will send over serial
-#define SCALES_NUM_PROFILES 3       // The number of scales profiles defined
+#define SCALES_NUM_PROFILES 2       // The number of scales profiles defined
 scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
     {
         "Avery ZK830",                                                                 // Avery ZK830 Indicator
@@ -366,8 +366,8 @@ scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
     {
         "Mettler Generic",       // Common Mettler Scales
         CRGB::DarkBlue,          // LED Color
-        9600,                    // Baud Rate
-        "M\r\n",                 // Request String
+        115200,                  // Baud Rate
+        "S\r\n",                 // Request String
         1000,                    // Request Interval
         3000,                    // Request Timeout
         "\r\n",                  // Response Termination
@@ -378,22 +378,6 @@ scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
         "0000111111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
         -50.00,                  // Minimum Weight
         100.00,                  // Maximum Weight
-    },
-    {
-        "Adam CPWplus",         // Adam CPWplus Scales
-        CRGB::DarkRed,          // LED Color
-        9600,                   // Baud Rate
-        "A\r\n",                // Request String
-        1000,                   // Request Interval
-        3000,                   // Request Timeout
-        "\r\n",                 // Response Termination
-        1,                      // Number of Values in Response
-        0,                      // Index of Weight Value in Response
-        "S S      0.00 lb\r\n", // Response Format in Pounds
-        "S S      0.00 kg\r\n", // Response Format in Kilograms
-        "000011111111100000",   // Response mask, zeros indicate data that never changes, and ones indicate variables
-        -50.00,                 // Minimum Weight
-        100.00,                 // Maximum Weight
     }};
 
 // ---------- Runtime Variables ----------
@@ -665,6 +649,11 @@ void scalesSearch()
   // Check for a timeout on the current profile
   if (millis() - lastScalesResponseTime >= scalesProfile[activeScalesProfile].requestTimeout)
   {
+
+#ifdef DEBUG_SCALES_SEARCH
+    DEBUG_PORT.println("No response from " + String(scalesProfile[activeScalesProfile].name) + " in " + String(scalesProfile[activeScalesProfile].requestTimeout) + "ms, switching profiles");
+#endif
+
     // Move to the next profile
     activeScalesProfile++;
     if (activeScalesProfile >= SCALES_NUM_PROFILES)
@@ -672,9 +661,18 @@ void scalesSearch()
       activeScalesProfile = 0;
     }
 
+    // Update the timeout
+    lastScalesResponseTime = millis();
+
+#ifdef DEBUG_SCALES_SEARCH
+    DEBUG_PORT.println("Switched to " + String(scalesProfile[activeScalesProfile].name) + " - " + String(scalesProfile[activeScalesProfile].baudRate) + " Baud");
+#endif
+
     // Update the serial port to the new profile
     SCALES_PORT.end();
-    SCALES_PORT.begin(sortedScaleProfiles[activeScalesProfile].baudRate);
+    SCALES_PORT.begin(scalesProfile[activeScalesProfile].baudRate);
+    delay(1000); // Wait for the serial port to initialize
+
   }
 }
 
