@@ -330,8 +330,8 @@ int statusLEDHue = 0; // Tracks hue for animations
 // #define DEBUG_HID
 // #define DEBUG_SCALES
 #ifdef DEBUG_SCALES
-// #define DEBUG_SCALES_SORT
-// #define DEBUG_SCALES_SEARCH
+#define DEBUG_SCALES_SORT
+#define DEBUG_SCALES_SEARCH
 // #define DEBUG_SCALES_RECEIVE
 // #define DEBUG_SCALES_VERIFY
 // #define DEBUG_SCALES_PARSE
@@ -383,6 +383,7 @@ scalesProfile_t scalesProfile[SCALES_NUM_PROFILES] = {
 // ---------- Runtime Variables ----------
 // HID Instance
 Adafruit_USBD_HID usb_hid;
+bool HIDStarted = false;
 
 // Weight Formated for HID Response
 int HIDWeight = 0;
@@ -421,8 +422,10 @@ void setup()
   statusLEDInit();
 #endif
 
-  // Start the HID program
+// Start the HID program
+#ifdef ENABLE_DEBUG
   HIDInit();
+#endif
 
 // Start the debugger
 #ifdef ENABLE_DEBUG
@@ -441,7 +444,10 @@ void loop()
 #endif
 
   // Send an HID report
-  HIDUpdate();
+  if (HIDStarted)
+  {
+    HIDUpdate();
+  }
 
   // If the scales are not connected, search for them
   if (!scalesConnected)
@@ -524,10 +530,25 @@ void HIDInit()
   usb_hid.setBootProtocol(HID_ITF_PROTOCOL_NONE);
   usb_hid.setPollInterval(10);
   usb_hid.setReportDescriptor(descriptor, sizeof(descriptor));
-  usb_hid.setStringDescriptor("Serial Scales Adapter");
+
+  // Set intelligent device name
+  static char intelligentName[64];
+  snprintf(intelligentName, sizeof(intelligentName),
+           "Serial Adapter (%s)",
+           scalesProfile[activeScalesProfile].name);
+  usb_hid.setStringDescriptor(scalesConnected ? intelligentName : "Serial Scales Adapter");
 
   // Start the HID
   usb_hid.begin();
+  HIDStarted = true;
+
+  // Reenumerate USB so the computer recognizes the HID
+  if (scalesConnected)
+  {
+    TinyUSBDevice.detach();
+    delay(100);
+    TinyUSBDevice.attach();
+  }
 }
 
 // Sends a report to the USB Host
@@ -644,7 +665,6 @@ void scalesSearch()
     // Update the serial port to the new profile
     SCALES_PORT.end();
     SCALES_PORT.begin(scalesProfile[activeScalesProfile].baudRate);
-    delay(1000); // Wait for the serial port to initialize
   }
 }
 
@@ -906,7 +926,15 @@ bool verifyResponse(char *data, char *format, char *mask)
 // Flags that a good response was received from the scales
 void flagGoodReceive()
 {
-  scalesConnected = true;
+  // If this is the first connection, update the USB descriptior
+  if (!scalesConnected)
+  {
+    scalesConnected = true;
+    if (!HIDStarted)
+    {
+      HIDInit(); // Start the HID late to include the scale name in the USB descriptor
+    }
+  }
   lastScalesResponseTime = millis();
 }
 
